@@ -164,7 +164,7 @@ class Check(BasicTypeCaring):
         needed = num_lands(1, turn)
         # BAKERT includes itself incorrectly
         found = sum(n for land, n in lands if land.has_basic_land_types(self.basic_land_types_needed))
-        return needed >= found
+        return found >= needed
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Snarl(BasicTypeCaring):
@@ -469,13 +469,15 @@ def test_basic_land_types():
     assert VineglimmerSnarl.basic_land_types == set()
 
 def test_untapped():
-    lands = LandList({(Plains, 20), (MysticGate, 4), (PortTown, 4)})
+    lands = LandList({(Plains, 20), (MysticGate, 4), (PortTown, 4), (GlacialFortress, 4)})
     assert PortTown.untapped(1, lands)
     assert PortTown.untapped(2, lands)
     assert Plains.untapped(1, lands)
     assert Plains.untapped(2, lands)
-    assert MysticGate.untapped(2, lands)
     assert not MysticGate.untapped(1, lands)
+    assert MysticGate.untapped(2, lands)
+    assert not GlacialFortress.untapped(1, lands)
+    assert GlacialFortress.untapped(2, lands)
     lands = LandList({(Mountain, 20), (MysticGate, 4)})
     assert not MysticGate.untapped(1, lands)
     assert not MysticGate.untapped(10, lands)
