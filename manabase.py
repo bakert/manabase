@@ -183,7 +183,7 @@ class Filter(Land):
     def untapped(self, turn: int, lands: LandList) -> bool:
         if turn == 1:
             return False
-        num_other_lands_producing_our_colors_needed = num_lands(1, turn)
+        needed = num_lands(1, turn)
         colors_needed = self.produces
         # BAKERT counting itself here
         found = 0
@@ -192,7 +192,7 @@ class Filter(Land):
                 if color in land.produces:
                     found += n
                     break
-        return found > num_other_lands_producing_our_colors_needed
+        return found > needed
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Bicycle(Tapland):
