@@ -257,7 +257,6 @@ ShelteredThicket = Bicycle("Sheltered Thicket", None, "Land - Mountain Forest", 
 
 bicycles = {CanyonSlough, FetidPools, IrrigatedFarmland, ScatteredGroves, ShelteredThicket}
 
-# BAKERT not all of these are legal
 CelestialColonnade = Tapland("Celestial Colonnade", None, "Land", (W, U))
 CreepingTarPit     = Tapland("Creeping Tar Pit",    None, "Land", (U, B))
 HissingQuagmire    = Tapland("Hissing Quagmire",    None, "Land", (B, G))
@@ -286,6 +285,8 @@ creature_lands = {CelestialColonnade, HissingQuagmire, LavaclawReaches, Lumberin
 
 GrandColiseum = Tapland("Grand Coliseum", None, "Land", (W, U, B, R, G))
 VividCrag = Tapland("Vivid Crag", None, "Land", (W, U, B, R, G))
+
+# BAKERT PrarieStream and the GW one
 
 # no creaturelands for now for speed
 all_lands: set[Land] = basics.union(checks).union(snarls).union(bicycles).union(filters).union({GrandColiseum, VividCrag})
@@ -438,6 +439,7 @@ def num_lands(mana_value: int, turn: int) -> int:
 
 # BAKERT Include Constraint(ManaCost(R), 2) and others once eliding redundant requirements is implemented
 jeskai_twin = [Constraint(ManaCost(1, U)), Constraint(ManaCost(3, W)), Constraint(ManaCost(2, R, R, R))]
+# BAKERT this should know about three drops, so it knows to play 24 land.
 azorius_taxes = [Constraint(ManaCost(W), 1), Constraint(ManaCost(W, W), 2), Constraint(ManaCost(U, W), 2), Constraint(ManaCost(1, U), 2)]
 azorius_taxes_postboard = azorius_taxes + [Constraint(ManaCost(2, W, W), 4)]
 
