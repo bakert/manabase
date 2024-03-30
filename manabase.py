@@ -140,6 +140,12 @@ class Basic(Land):
         return True
 
 @dataclass(eq=True, frozen=True, repr=False)
+class Tapland(Land):
+    @functools.cache
+    def untapped(self, turn: int, lands: LandList) -> bool:
+        return False
+
+@dataclass(eq=True, frozen=True, repr=False)
 class BasicTypeCaring(Land):
     basic_land_types_needed: frozenset[BasicLandType] = field(default=frozenset(), init=False)
 
@@ -159,12 +165,6 @@ class Check(BasicTypeCaring):
         # BAKERT includes itself incorrectly
         found = sum(n for land, n in lands if land.has_basic_land_types(self.basic_land_types_needed))
         return needed >= found
-
-@dataclass(eq=True, frozen=True, repr=False)
-class Tapland(Land):
-    @functools.cache
-    def untapped(self, turn: int, lands: LandList) -> bool:
-        return False
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Snarl(BasicTypeCaring):
