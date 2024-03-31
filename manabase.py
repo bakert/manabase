@@ -494,9 +494,7 @@ def test() -> None:
 if len(sys.argv) >= 2 and (sys.argv[1] == "--test" or sys.argv[1] == "-t"):
     test()
 else:
-    solve(jeskai_twin)
-    # import cProfile
-    # cProfile.run("solve(azorius_taxes)")
+    solve(azorius_taxes)
 
 # BAKERT
 # Phyrexian mana
