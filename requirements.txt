@@ -1,2 +1,5 @@
 black
+more_itertools
+multiset
+mypy
 ortools
