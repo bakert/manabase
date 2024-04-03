@@ -6,3 +6,4 @@ $ source bin/activate
 $ pip install -r requirements.txt
 $ python manabase.py
 $ black --line-lenght=1000 .
+$ mypy --disallow-untyped-defs --disallow-incomplete-defs .
