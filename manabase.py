@@ -47,7 +47,7 @@ C = Color("C", "Colorless")
 all_colors = {W, U, B, R, G, C}
 
 
-class ColorCombination(FrozenMultiset):
+class ColorCombination(FrozenMultiset[Color]):
     def __repr__(self) -> str:
         return "".join(str(c) for c in list(self))
 
@@ -1245,7 +1245,7 @@ def test() -> None:
 # Mana costs are tuples because they (kinda) have an order
 # Color combinations are FrozenMultisets and do not have an order
 # But in a sense these are the same thing - {1}{B}{R} being pretty similar to {B}{R} so maybe they should both use the same representation?
-# Tuples are better for typing as we can't say FrozenMultiset[Color] due to multiset not supporting mypy
+# perhaps best of all is if mana costs are frozen multisets but something knows how to present them in the right order?
 
 if len(sys.argv) >= 2 and (sys.argv[1] == "--test" or sys.argv[1] == "-t"):
     test()
