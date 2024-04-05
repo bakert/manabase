@@ -5,48 +5,10 @@ from typing import Callable, Any, Iterable
 import sys
 
 from more_itertools import powerset
-from multiset import FrozenMultiset  # type: ignore
+from multiset import FrozenMultiset
 from ortools.sat.python import cp_model
 
 MAX_DECK_SIZE = 100
-
-
-@dataclass
-class Model:
-    debug: bool = False
-    vars: list[cp_model.IntVar | cp_model.BoolVarT] = field(default_factory=list)
-    model: cp_model.CpModel = field(init=False)
-    store: dict[str, Any] = field(default_factory=dict, init=False)
-
-    def __post_init__(self) -> None:
-        self.model = cp_model.CpModel()
-
-    def add(self, constraint: cp_model.BoundedLinearExpression | bool) -> cp_model.Constraint:
-        if self.debug:
-            print("[MODEL][CON]", constraint, file=sys.stderr)
-        return self.model.Add(constraint)
-
-    # BAKERT there are some rogue Anys in the code now
-    # BAKERT remember is a bit of a general term for this
-    # BAKERT it's possible we want a NewIntVar + remember combo or some other way of doing this
-    # BAKERT type of key is wrong can be "untapped"
-    # BAKERT we don't have sources=N for untapped
-    def remember(self, constraint: "Constraint", key: "ColorCombination", stuff: Any) -> None:
-        if not self.store.get(constraint):
-            self.store[constraint] = {}
-        self.store[constraint][key] = stuff
-
-    def __getattr__(self, name: str) -> Callable:
-        def wrapper(*args: list[Any], **kwargs: dict[str, Any]) -> cp_model.IntVar | cp_model.BoolVarT:
-            if self.debug:
-                print("[MODEL][VAR]", name, args, kwargs)
-            v = getattr(self.model, name)(*args, **kwargs)
-            if name in ["NewBoolVar", "NewIntVar"]:
-                self.vars.append(v)
-            return v
-
-        return wrapper
-
 
 @dataclass(frozen=True)
 @total_ordering
@@ -55,15 +17,15 @@ class Color:
     name: str
 
     @property
-    def _value(self):
+    def _value(self) -> int:
         return {"W": 1, "U": 2, "B": 3, "R": 4, "G": 5, "C": 6}[self.code]
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Color):
             return NotImplemented
         return self._value == other._value
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, Color):
             return NotImplemented
         return self._value < other._value
@@ -91,6 +53,45 @@ class ColorCombination(FrozenMultiset):
 
     def __str__(self) -> str:
         return self.__repr__()
+
+
+@dataclass
+class Model:
+    debug: bool = False
+    vars: list[cp_model.IntVar | cp_model.BoolVarT] = field(default_factory=list)
+    model: cp_model.CpModel = field(init=False)
+    store: dict["Constraint", Any] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self.model = cp_model.CpModel()
+
+    def add(self, constraint: cp_model.BoundedLinearExpression | bool) -> cp_model.Constraint:
+        if self.debug:
+            print("[MODEL][CON]", constraint, file=sys.stderr)
+        return self.model.Add(constraint)
+
+    # BAKERT there are some rogue Anys in the code now
+    # BAKERT remember is a bit of a general term for this
+    # BAKERT it's possible we want a NewIntVar + remember combo or some other way of doing this
+    # BAKERT type of key is wrong can be "untapped"
+    # BAKERT we don't have sources=N for untapped
+        # BAKERT typing issue here
+    def remember(self, constraint: "Constraint", key: ColorCombination | str, stuff: Any) -> None:
+        if not self.store.get(constraint):
+            self.store[constraint] = {}
+        self.store[constraint][key] = stuff
+
+    def __getattr__(self, name: str) -> Callable:
+        def wrapper(*args: list[Any], **kwargs: dict[str, Any]) -> cp_model.IntVar | cp_model.BoolVarT:
+            if self.debug:
+                print("[MODEL][VAR]", name, args, kwargs)
+            v = getattr(self.model, name)(*args, **kwargs)
+            if name in ["NewBoolVar", "NewIntVar"]:
+                self.vars.append(v)
+            return v
+
+        return wrapper
+
 
 
 IntVar = cp_model.IntVar | int
@@ -134,12 +135,12 @@ class ManaCost:
     def colored_pips(self) -> tuple[Color, ...]:
         return tuple(pip for pip in self.pips if isinstance(pip, Color))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, ManaCost):
             return NotImplemented
         return self.mana_value == other.mana_value
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, ManaCost):
             return NotImplemented
         return self.mana_value < other.mana_value
@@ -218,12 +219,12 @@ class Land(Card):
     def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
         raise NotImplementedError
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, Land):
             return NotImplemented
         return self.produces == other.produces
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, Land):
             return NotImplemented
         return self.produces < other.produces  # BAKERT this won't sort White first which we probably want
@@ -588,10 +589,11 @@ class Solution:
     min_lands: int = field(init=False)
     mana_spend: int = field(init=False)
     max_mana_spend: int = field(init=False)
-    # BAKERT keys are all str, but probably shouldn't be
-    required: dict[Constraint, dict[ColorCombination, int]] = field(default_factory=dict, init=False)
-    sources: dict[Constraint, dict[ColorCombination, int]] = field(default_factory=dict, init=False)
-    untapped: dict[Constraint, int] = field(default_factory=dict, init=False)
+    # BAKERT keys are all str, but probably shouldn't be as they are truly Constraints and ColorCombinations
+    required: dict[str, dict[str, int]] = field(default_factory=dict, init=False)
+    sources: dict[str, dict[str, int]] = field(default_factory=dict, init=False)
+    # BAKERT store and untapped are in a sense the same thing, combine them or just do better with all this in general?
+    untapped: dict[Constraint | str, int] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         lands = {land.name: land for land in all_lands}
@@ -638,7 +640,7 @@ class Solution:
                     continue
                 r.append(f"{self.lands[lnd]} {part.replace('[', '').replace("]", "")}")
             return ", ".join(r)
-        for constraint in self.constraints:
+        for constraint in sorted(self.constraints):
             s += f"Constraint {constraint}\n"
             for color_combination in sorted(constraint.color_combinations()):
                 # BAKERT it's kinda ugly how self.required and friends use strings - vivify instead? store does not which is even worse
@@ -668,9 +670,9 @@ def card(spec: str, turn: int | None = None) -> Constraint:
 
 # BAKERT need some way to say "the manabase must include 4 Shelldock Isle"
 def solve(constraints: frozenset[Constraint], lands: frozenset[Land] | None = None) -> Solution | None:
+    # T2 RR completely counterfeits T2 R so there's no point in frank returning R=13, but you still need R in BR or BBR
     if not lands:
         lands = all_lands
-    constraints = sorted(constraints)
     model = define_model(constraints, lands)
     solver = cp_model.CpSolver()
     status = solver.solve(model.model)
@@ -1063,6 +1065,24 @@ LightningSkelemental = card("BRR")
 
 skelemental_sac = frozenset([BloodsoakedChampion, UnluckyWitness, DreadhordeButcher, LightningSkelemental])
 
+Korlash = card("2BB")
+Lashwrithe = card("4")
+PlagueStinger = card("1B")
+
+mono_b_infect = [Korlash, Lashwrithe, PlagueStinger]
+
+ArchiveDragon = card("4UU")
+NorinTheWary = card("R")
+
+our_deck = frozenset([NorinTheWary, ArchiveDragon])
+
+CenoteScout = card("G")
+CenoteScoutOnTwo = card("G", 2)
+MasterOfThePearlTrident = card("UU")
+KumenaTyrantOfOrazca = card("1GU")
+
+ug_merfolk = frozenset([CenoteScoutOnTwo, MasterOfThePearlTrident, KumenaTyrantOfOrazca])
+
 
 def test_viable_lands() -> None:
     lands = frozenset({Plains, Island, Swamp, CelestialColonnade, StirringWildwood, CreepingTarPit})
@@ -1230,4 +1250,4 @@ def test() -> None:
 if len(sys.argv) >= 2 and (sys.argv[1] == "--test" or sys.argv[1] == "-t"):
     test()
 else:
-    print(solve(ooze))
+    print(solve(ug_merfolk))
