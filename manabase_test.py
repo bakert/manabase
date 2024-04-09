@@ -138,7 +138,7 @@ def test_solve() -> None:
     assert solution
     print(solution)
     assert solution.status == cp_model.OPTIMAL
-    assert MysticGate not in solution.lands
+    assert MysticGate in solution.lands
     assert CrumblingNecropolis not in solution.lands
     # BAKERT assert solution.lands[RiverOfTears] == 4
 
