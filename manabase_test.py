@@ -1,26 +1,26 @@
+import pytest
+
 # BAKERT I don't like import * but anything else is definitely painful at this point
 from manabase import *
+from remembering_model import KeyCollision
+
 
 def test_deck() -> None:
     constraints = frozenset([card("W"), card("RB"), card("WR"), card("5G")])
     assert Deck(constraints, 60).colors == frozenset({W, R, B, G})
 
-# BAKERT make these "real" unit tests
+
 def test_remembering_model_collision() -> None:
     model = RememberingModel()
     model.new_int_var(0, 1, ("test",))
     model.new_int_var(0, 1, ("test", "other"))
-    found = False
-    try:
+    with pytest.raises(KeyCollision):
         model.new_int_var(0, 2, ("test",))
-    except KeyCollision:
-        found = True
-    assert found
 
 
 def test_viable_lands() -> None:
     lands = frozenset({Plains, Island, Swamp, CelestialColonnade, StirringWildwood, CreepingTarPit})
-    assert viable_lands({W, U}, lands) == {Plains, Island, CelestialColonnade}
+    assert viable_lands(frozenset({W, U}), lands) == {Plains, Island, CelestialColonnade}
 
 
 def test_str_repr() -> None:
@@ -104,6 +104,7 @@ def test_solve() -> None:
     solution = solve(Deck(azorius_taxes, 60))
     assert solution
     assert solution.status == cp_model.OPTIMAL
+    print(solution)
     assert solution.total_lands == 23
     assert solution.lands[PortTown] == 4
     assert solution.lands[Plains] == 10
@@ -132,15 +133,14 @@ def test_solve() -> None:
     assert solution
     assert not solution.lands.get(PrairieStream)
 
-    # BAKERT figure this out
     necrotic_ooze = frozenset([card("B", 2), card("UB"), card("WB"), card("2B"), card("3U"), card("2BB")])
     solution = solve(Deck(necrotic_ooze, 60))
     assert solution
-    print(solution)
     assert solution.status == cp_model.OPTIMAL
-    assert MysticGate in solution.lands
+    assert MysticGate not in solution.lands
     assert CrumblingNecropolis not in solution.lands
-    # BAKERT assert solution.lands[RiverOfTears] == 4
+    # BAKERT should lands understand that it has 0 of everything that isn't present
+    assert solution.lands.get(RiverOfTears, 0) == 4
 
     # BAKERT we can enable this test when colored sources works which will allow the model to pick Vivid Crag over RestlessVents here
     # solution = solve(Deck(ooze_kiki, 60))
