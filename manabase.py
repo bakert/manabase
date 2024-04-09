@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from functools import total_ordering
-from typing import Iterable
+from typing import Iterable, override
 
 from more_itertools import powerset
 from multiset import FrozenMultiset
@@ -325,15 +325,15 @@ class Land(Card):
         return self.produces < other.produces or (self.produces == other.produces and self.name < other.name)
 
 
-class Conditional(Land):
-    def untapped_if(self, model: Model, turn: Turn, needed: int, enablers: cp_model.LinearExprT, land_var: cp_model.IntVar) -> cp_model.IntVar:
-        untapped_var = model.new_bool_var((self, turn, Aspect.UNTAPPED))
-        model.add(enablers >= needed).OnlyEnforceIf(untapped_var)  # type: ignore
-        model.add(enablers < needed).OnlyEnforceIf(untapped_var.Not())
-        makes_mana_var = model.new_int_var(0, 4, (self, turn))
-        model.add(makes_mana_var == land_var).OnlyEnforceIf(untapped_var)
-        model.add(makes_mana_var == 0).OnlyEnforceIf(untapped_var.Not())
-        return makes_mana_var
+Manabase = dict[Land, int]
+
+
+@dataclass(eq=True, frozen=True, repr=False)
+class Nonbasic(Land):
+    @override
+    @property
+    def max(self) -> int:
+        return 4
 
 
 @dataclass(eq=True, frozen=True, repr=False)
@@ -351,8 +351,19 @@ class Basic(Land):
         return contributions
 
 
+class Conditional(Nonbasic):
+    def untapped_if(self, model: Model, turn: Turn, needed: int, enablers: cp_model.LinearExprT, land_var: cp_model.IntVar) -> cp_model.IntVar:
+        untapped_var = model.new_bool_var((self, turn, Aspect.UNTAPPED))
+        model.add(enablers >= needed).OnlyEnforceIf(untapped_var)  # type: ignore
+        model.add(enablers < needed).OnlyEnforceIf(untapped_var.Not())
+        makes_mana_var = model.new_int_var(0, 4, (self, turn))
+        model.add(makes_mana_var == land_var).OnlyEnforceIf(untapped_var)
+        model.add(makes_mana_var == 0).OnlyEnforceIf(untapped_var.Not())
+        return makes_mana_var
+
+
 @dataclass(eq=True, frozen=True, repr=False)
-class Tapland(Land):
+class Tapland(Nonbasic):
     def untapped_rules(self, model: Model, turn: Turn) -> IntVar:
         return 0
 
@@ -488,7 +499,7 @@ class Bicycle(Tapland):
 
 
 @dataclass(eq=True, frozen=True, repr=False)
-class Pain(Land):
+class Pain(Nonbasic):
     painful: bool = True
 
     def untapped_rules(self, model: Model, turn: Turn) -> IntVar:
@@ -507,7 +518,7 @@ class Pain(Land):
 # BAKERT complicated to explain this only makes U for instants on t1, and it only makes B on your own turn, and only if you have another land! For now, it's an Underground Sea
 # BAKERT we must at least explain that it's worse than an Island in a non-B deck and worse than a Swamp in a non-U deck somehow
 @dataclass(eq=True, frozen=True, repr=False)
-class RiverOfTearsLand(Land):
+class RiverOfTearsLand(Nonbasic):
     def untapped_rules(self, model: Model, turn: Turn) -> IntVar:
         return model.lands[self]
 
@@ -748,8 +759,20 @@ def card(spec: str, turn: int | None = None) -> Constraint:
     return Constraint(ManaCost(*parts), Turn(turn))
 
 
+def make_deck(*args: Constraint | int) -> Deck:
+    constraints, size = set(), None
+    for arg in args:
+        if isinstance(arg, Constraint):
+            constraints.add(arg)
+        elif isinstance(arg, int) and size is None:
+            size = arg
+        else:
+            raise ValueError(type(arg), arg)
+    return Deck(frozenset(constraints), size or 60)
+
+
 # BAKERT need some way to say "the manabase must include 4 Shelldock Isle"
-def solve(deck: Deck, weights: Weights, lands: frozenset[Land] | None = None, forced_lands: dict[Land, int] | None = None) -> Solution | None:
+def solve(deck: Deck, weights: Weights, lands: frozenset[Land] | None = None, forced_lands: Manabase | None = None) -> Solution | None:
     # BAKERT T2 RR completely counterfeits T2 R so there's no point in frank returning R=13, but you still need R in BR or BBR
     if not forced_lands:
         forced_lands = {}
@@ -764,7 +787,7 @@ def solve(deck: Deck, weights: Weights, lands: frozenset[Land] | None = None, fo
 
 
 # BAKERT this function is too large, break it up
-def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_lands: dict[Land, int]) -> Model:
+def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_lands: Manabase) -> Model:
     possible_lands = viable_lands(deck.colors, lands)
     model = Model(deck, possible_lands, weights, forced_lands)
 
@@ -961,10 +984,10 @@ AncestralVision = card("U")
 
 KikiOnSix = card("2RRR", 6)
 
-jeskai_twin_base = frozenset([BurstLightningOnTurnTwo, MemoryLapse, Pestermite, RestorationAngel])
-jeskai_twin = frozenset(jeskai_twin_base | {KikiJikiMirrorBreaker})
-jeskai_twin_with_the_ravens_warning = frozenset(jeskai_twin | {DeputyOfDetention})
-jeskai_twin_but_dont_rush_kiki = frozenset(jeskai_twin_base | {KikiOnSix})
+jeskai_twin_base = frozenset({BurstLightningOnTurnTwo, MemoryLapse, Pestermite, RestorationAngel})
+jeskai_twin = Deck(frozenset(jeskai_twin_base | {KikiJikiMirrorBreaker}), 60)
+jeskai_twin_with_the_ravens_warning = Deck(frozenset(jeskai_twin.constraints | {DeputyOfDetention}), 60)
+jeskai_twin_but_dont_rush_kiki = Deck(frozenset(jeskai_twin_base | {KikiOnSix}), 60)
 
 CracklingDrake = card("UURR")
 
@@ -973,45 +996,46 @@ AcademyLoremaster = card("UU")
 
 KikiOnSix = card("2RRR", 6)
 
-izzet_twin = frozenset([BurstLightningOnTurnTwo, MemoryLapse, Pestermite, AcademyLoremaster, KikiOnSix])
+izzet_twin = make_deck(BurstLightningOnTurnTwo, MemoryLapse, Pestermite, KikiOnSix)
+izzet_twin_with_loremaster = Deck(frozenset(izzet_twin.constraints | {AcademyLoremaster}), 60)
 
 BenevolentBodyguard = Constraint(ManaCost(W), Turn(1))
 MeddlingMage = Constraint(ManaCost(U, W), Turn(2))
 SamuraiOfThePaleCurtain = Constraint(ManaCost(W, W), Turn(2))
 
-azorius_taxes = frozenset([BenevolentBodyguard, MeddlingMage, SamuraiOfThePaleCurtain, DeputyOfDetention])
+azorius_taxes = make_deck(BenevolentBodyguard, MeddlingMage, SamuraiOfThePaleCurtain, DeputyOfDetention)
 
 SettleTheWreckage = Constraint(ManaCost(2, W, W), Turn(4))
 VenserShaperSavant = card("2UU")
 
-azorius_taxes_postboard = frozenset(azorius_taxes | {SettleTheWreckage})
+azorius_taxes_postboard = Deck(frozenset(azorius_taxes.constraints | {SettleTheWreckage}), 60)
 
-mono_w_bodyguards = frozenset([BenevolentBodyguard])
-white_weenie = frozenset([BenevolentBodyguard, SamuraiOfThePaleCurtain])
-meddlers = frozenset([MeddlingMage])
+mono_w_bodyguards = make_deck(BenevolentBodyguard)
+white_weenie = make_deck(BenevolentBodyguard, SamuraiOfThePaleCurtain)
+meddlers = make_deck(MeddlingMage)
 
 InvasionOfAlara = Constraint(ManaCost(W, U, B, R, G), Turn(5))
-invasion_of_alara = frozenset([InvasionOfAlara])
+invasion_of_alara = make_deck(InvasionOfAlara)
 
 Duress = card("B")
 Abrade = card("1R")
 DigThroughTime = card("UU", 5)
 WrathOfGod = card("2WW", 4)
 
-popular = frozenset([MemoryLapse, Abrade, DigThroughTime, WrathOfGod])
+popular = make_deck(MemoryLapse, Abrade, DigThroughTime, WrathOfGod)
 
 BaskingRootwalla = card("G")
 PutridImp = card("B")
 LotlethTroll = card("BG")
 LotlethTrollWithRegen = card("BBG")
 
-golgari_madness = frozenset([PutridImp, LotlethTroll])
+golgari_madness = make_deck(PutridImp, LotlethTroll)
 
 GrimLavamancer = card("R")
 Pteramander = card("U")
 LogicKnot = card("1UU")
 
-gfabsish = frozenset([GrimLavamancer, Pteramander, VenserShaperSavant])
+gfabsish = make_deck(GrimLavamancer, Pteramander, VenserShaperSavant)
 
 Assault = card("R", 2)
 LagoonBreach = card("1U")
@@ -1019,13 +1043,13 @@ MadcapExperiment = card("3R")
 Away = card("2B")
 ChainOfPlasma = card("1R")
 
-my_invasion_of_alara = frozenset([Assault, LagoonBreach, MadcapExperiment, Away, InvasionOfAlara, ChainOfPlasma])
+my_invasion_of_alara = make_deck(Assault, LagoonBreach, MadcapExperiment, Away, InvasionOfAlara, ChainOfPlasma)
 
 GiantKiller = card("W")
 KnightOfTheWhiteOrchid = card("WW")
 SunTitan = card("4WW")
 
-emeria = frozenset([GiantKiller, KnightOfTheWhiteOrchid, SunTitan])
+emeria = make_deck(GiantKiller, KnightOfTheWhiteOrchid, SunTitan)
 
 PriestOfFellRites = card("WB")
 HaakonStromgaldScourge = card("1BB", 5)
@@ -1037,9 +1061,9 @@ EsperCharm = card("WUB")
 ForbidOnTurnFour = card("1UU", 4)
 WrathOfGod = card("2WW")
 
-gifts = frozenset([PriestOfFellRites, HaakonStromgaldScourge, MagisterOfWorth, OptOnTurn2, SearchForAzcanta, CouncilsJudgment, EsperCharm, ForbidOnTurnFour, WrathOfGod])
+gifts = make_deck(PriestOfFellRites, HaakonStromgaldScourge, MagisterOfWorth, OptOnTurn2, SearchForAzcanta, CouncilsJudgment, EsperCharm, ForbidOnTurnFour, WrathOfGod)
 
-actual_twin = frozenset([GrimLavamancer, Pteramander, KikiJikiMirrorBreaker, DigThroughTime])
+actual_twin = make_deck(GrimLavamancer, Pteramander, KikiJikiMirrorBreaker, DigThroughTime)
 
 # Crypt of Agadeem possibly beyond simulation :)
 LamplightPhoenix = card("1RR")
@@ -1048,12 +1072,12 @@ BringerOfTheLastGift = card("6BB")
 StarvingRevenant = card("2BB")
 ArchfiendOfIfnir = card("3BB")
 
-midnight_phoenix = frozenset([LamplightPhoenix, BigCyclingTurn, StarvingRevenant, ArchfiendOfIfnir])
+midnight_phoenix = make_deck(LamplightPhoenix, BigCyclingTurn, StarvingRevenant, ArchfiendOfIfnir)
 
 Cremate = card("B")
 GlimpseTheUnthinkable = card("UB")
 
-mill = frozenset([Cremate, GlimpseTheUnthinkable, DigThroughTime])
+mill = make_deck(Cremate, GlimpseTheUnthinkable, DigThroughTime)
 
 HomeForDinner = card("1W")
 GeologicalAppraiser = card("2RR")
@@ -1063,26 +1087,26 @@ CavalierOfDawn = card("2WWW")
 ChancellorOfTheForge = card("4RRR")
 EtalisFavor = card("2R")
 
-glimpse = frozenset([HomeForDinner, GeologicalAppraiser, EtalisFavor])
+glimpse = make_deck(HomeForDinner, GeologicalAppraiser, EtalisFavor)
 
 SeismicAssault = card("RRR")
 SwansOfBrynArgoll = card("2UU")
 
-seismic_swans = frozenset([SeismicAssault, SwansOfBrynArgoll])
+seismic_swans = make_deck(SeismicAssault, SwansOfBrynArgoll)
 
 NecroticOoze = card("2BB")
 GiftsUngiven = card("3U")
 TaintedIndulgence = card("UB")
 BuriedAlive = card("2B")
 
-ooze = frozenset({NecroticOoze, PriestOfFellRites, TaintedIndulgence, GiftsUngiven, BuriedAlive})
+ooze = make_deck(NecroticOoze, PriestOfFellRites, TaintedIndulgence, GiftsUngiven, BuriedAlive)
 
 BloodsoakedChampion = card("B")
 UnluckyWitness = card("R")
 DreadhordeButcher = card("BR")
 LightningSkelemental = card("BRR")
 
-skelemental_sac = frozenset([BloodsoakedChampion, UnluckyWitness, DreadhordeButcher, LightningSkelemental])
+skelemental_sac = make_deck(BloodsoakedChampion, UnluckyWitness, DreadhordeButcher, LightningSkelemental)
 
 Korlash = card("2BB")
 Lashwrithe = card("4")
@@ -1093,22 +1117,22 @@ mono_b_infect = [Korlash, Lashwrithe, PlagueStinger]
 ArchiveDragon = card("4UU")
 NorinTheWary = card("R")
 
-our_deck = frozenset([NorinTheWary, ArchiveDragon])
+our_deck = make_deck(NorinTheWary, ArchiveDragon)
 
 CenoteScout = card("G")
 CenoteScoutOnTwo = card("G", 2)
 MasterOfThePearlTrident = card("UU")
 KumenaTyrantOfOrazca = card("1GU")
 
-ug_merfolk = frozenset([CenoteScoutOnTwo, MasterOfThePearlTrident, KumenaTyrantOfOrazca])
+ug_merfolk = make_deck(CenoteScoutOnTwo, MasterOfThePearlTrident, KumenaTyrantOfOrazca)
 
-splash_gifts_ooze = frozenset([NecroticOoze, PriestOfFellRites, GiftsUngiven, BuriedAlive])
+splash_gifts_ooze = make_deck(NecroticOoze, PriestOfFellRites, GiftsUngiven, BuriedAlive)
 
-wb_ooze = frozenset([NecroticOoze, PriestOfFellRites])
+wb_ooze = make_deck(NecroticOoze, PriestOfFellRites)
 
 KarmicGuide = card("3WW")
 ConspiracyTheorist = card("1R")
-ooze_kiki = frozenset([ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo])
+ooze_kiki = make_deck(ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo)
 
 # BAKERT you should never choose Crumbling Necropolis over a check or a snarl in UR (or UB or RB) if you have even one land with the right basic types
 # BAKERT in general you should be able to get partial credit for a check or a snarl even if not hitting the numbers
@@ -1141,4 +1165,4 @@ ooze_kiki = frozenset([ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, P
 
 # BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
 
-print(solve(Deck(azorius_taxes, 60), WEIGHTS))
+print(solve(azorius_taxes, WEIGHTS))
