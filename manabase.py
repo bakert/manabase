@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import total_ordering
-from typing import Callable, Any, Iterable
+from typing import Callable, Any, Iterable, Literal, Hashable
 import sys
 
 from more_itertools import powerset
@@ -47,77 +47,12 @@ C = Color("C", "Colorless")
 all_colors = {W, U, B, R, G, C}
 
 
-class ColorCombination(FrozenMultiset[Color]):
+class ColorCombination(FrozenMultiset):
     def __repr__(self) -> str:
         return "".join(str(c) for c in list(self))
 
     def __str__(self) -> str:
         return self.__repr__()
-
-
-@dataclass
-class Model:
-    debug: bool = False
-    vars: list[cp_model.IntVar | cp_model.BoolVarT] = field(default_factory=list)
-    model: cp_model.CpModel = field(init=False)
-    store: dict["Constraint", Any] = field(default_factory=dict, init=False)
-
-    def __post_init__(self) -> None:
-        self.model = cp_model.CpModel()
-
-    def add(self, constraint: cp_model.BoundedLinearExpression | bool) -> cp_model.Constraint:
-        if self.debug:
-            print("[MODEL][CON]", constraint, file=sys.stderr)
-        return self.model.Add(constraint)
-
-    # BAKERT there are some rogue Anys in the code now
-    # BAKERT remember is a bit of a general term for this
-    # BAKERT it's possible we want a NewIntVar + remember combo or some other way of doing this
-    # BAKERT type of key is wrong can be "untapped"
-    # BAKERT we don't have sources=N for untapped
-        # BAKERT typing issue here
-    def remember(self, constraint: "Constraint", key: ColorCombination | str, stuff: Any) -> None:
-        if not self.store.get(constraint):
-            self.store[constraint] = {}
-        self.store[constraint][key] = stuff
-
-    def __getattr__(self, name: str) -> Callable:
-        def wrapper(*args: list[Any], **kwargs: dict[str, Any]) -> cp_model.IntVar | cp_model.BoolVarT:
-            if self.debug:
-                print("[MODEL][VAR]", name, args, kwargs)
-            v = getattr(self.model, name)(*args, **kwargs)
-            if name in ["NewBoolVar", "NewIntVar"]:
-                self.vars.append(v)
-            return v
-
-        return wrapper
-
-
-
-IntVar = cp_model.IntVar | int
-Contributions = dict[ColorCombination, IntVar]
-
-
-@dataclass(eq=True, frozen=True, order=True)
-class BasicLandType:
-    name: str
-    produces: Color
-
-    def __repr__(self) -> str:
-        return f"{self.name} Type"
-
-    def __str__(self) -> str:
-        return self.__repr__()
-
-
-PlainsType = BasicLandType("Plains", W)
-IslandType = BasicLandType("Island", U)
-SwampType = BasicLandType("Swamp", B)
-MountainType = BasicLandType("Mountain", R)
-ForestType = BasicLandType("Forest", G)
-
-all_basic_land_types = {PlainsType, IslandType, SwampType, MountainType, ForestType}
-
 
 @dataclass(frozen=True)
 @total_ordering
@@ -150,6 +85,173 @@ class ManaCost:
 
     def __str__(self) -> str:
         return self.__repr__()
+
+@dataclass(eq=True, frozen=True, order=True)
+class Constraint:
+    required: ManaCost
+    turn: int = -1
+
+    def color_combinations(self) -> frozenset[ColorCombination]:
+        return find_color_combinations(self.required.colored_pips)
+
+    def __post_init__(self) -> None:
+        if self.turn == -1:
+            object.__setattr__(self, "turn", self.required.mana_value)
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __repr__(self) -> str:
+        return f"T{self.turn} {self.required}"
+
+
+IntVar = cp_model.IntVar | int
+ModelVar = cp_model.IntVar | cp_model.BoolVarT
+Contributions = dict[ColorCombination, IntVar]  # BAKERT should the key here be Resource not ColorCombination? why not?
+UNTAPPED = "untapped"
+Untapped = Literal["untapped"]
+Resource = ColorCombination | Untapped
+ResourceVars = dict[Resource, list[IntVar]]
+ConstraintVars = dict[Constraint, ResourceVars]
+
+
+VarKey = tuple[Hashable, ...]
+class KeyCollision(Exception):
+    pass
+# RememberingModel is an extension to cp_model.CpModel that remembers the vars you add to the model
+# under a "key" which is a tuple passed when creating the var. It has no knowledge of the problem domain.
+class RememberingModel:
+    def __init__(self, debug: bool = False) -> None:
+        self.debug = debug
+        self.model = cp_model.CpModel()
+        self.store = {}
+        self._check = {}
+        # : dict[VarKey, IntVar] = field(default_factory=dict, init=False)
+        # check: dict[VarKey, str] = field(default_factory=dict, init=False)
+
+    def _var_name(self, var_type: type[int] | type[bool], lbound: int | None, ubound: int | None, key: VarKey) -> str:
+        # For readability, we store variables under pretty simple names but here we make sure our model has
+        # no collisions despite the simplicity of the variable names.
+        name = " ".join(str(v) for v in key)
+        record = (var_type, lbound, ubound, key)
+        existing = self._check.get(name)
+        if existing and existing != record:
+            raise KeyCollision(f"{record} conflicts with {existing}")
+        self._check[name] = record
+        return name
+
+    def add(self, constraint: cp_model.BoundedLinearExpression | bool) -> cp_model.Constraint:
+        if self.debug:
+            print("[MODEL][CON]", constraint, file=sys.stderr)
+        return self.model.Add(constraint)
+
+    def new_int_var(self, lbound: int, ubound: int, key: VarKey) -> cp_model.IntVar:
+        name = self._var_name(int, lbound, ubound, key)
+        v = self.model.NewIntVar(lbound, ubound, name)
+        self.store[key] = v
+        if self.debug:
+            print("[MODEL][INT]", v, file=sys.stderr)
+        return v
+
+    def new_bool_var(self, key: VarKey) -> cp_model.BoolVarT:
+        name = self._var_name(bool, None, None, key)
+        v = self.model.NewBoolVar(name)
+        self.store[key] = v
+        if self.debug:
+            print("[MODEL][BOOL]", v, file=sys.stderr)
+        return v
+
+    def maximize(self, objective: cp_model.ObjLinearExprT) -> None:
+        self.model.Maximize(objective)
+
+    # BAKERT do we want this on model not just access store? rename store to _store and check to _check?
+    def get(self, key: VarKey) -> ModelVar | None:
+        return self.store.get(key)
+
+
+class Model(RememberingModel):
+    def __init__(self, possible_lands: frozenset["Land"], debug: bool = False):
+        super().__init__(debug)
+        self.lands = {land: self.new_int_var(0, land.max, (land,)) for land in possible_lands}
+        # vars: list[ModelVar] = field(default_factory=list) BAKERT we must expose self.model.store the same way we exposed vars for full debug mode read everything
+        self.min_lands = None # self.min_lands: IntVar = field(init=False)
+        self.mana_spend = None # self.mana_spend: IntVar = field(init=False)
+        self.max_mana_spend = None # self.max_mana_spend: IntVar = field(init=False)
+        self.total_lands = None # self.total_lands: IntVar = field(init=False)
+        # self.lands = None # self.lands: dict["Land", ModelVar] = field(default_factory=dict, init=False)  # BAKERT forward ref
+        self.has = {} # self.has: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.required = {} # self.required: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.sources = {} # self.sources: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.providing = {} # self.providing: dict[tuple[int, Resource], list[IntVar]] = field(default_factory=dict, init=False)
+        self.objective = None # BAKERT it's weird to set these all to None, just init here?
+        self.pain = None
+
+    # BAKERT abysmal name
+    def new_has(self, turn: int, resource: Resource) -> cp_model.IntVar:
+        # BAKERT we use the two line pattern here, inconsistently
+        self.has[(turn, resource)] = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "has"))  # BAKERT is this redundant with any of the more recently added?
+        return self.has[(turn, resource)]
+
+    def new_required(self, turn: int, resource: Resource) -> cp_model.IntVar:
+        v = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "required"))
+        self.required[(turn, resource)] = v
+        return v  # BAKERT could make all these two lines by assigning into the dict and returning a get from the dict?
+
+    def new_sources(self, turn: int, resource: Resource) -> cp_model.IntVar:
+        v = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "sources"))  # BAKERT near-identical to required
+        self.sources[(turn, resource)] = v
+        return v  # BAKERT we could check for prior existence and not bother if found?
+
+    # BAKERT maybe init these as the class initializes? Too much in the model that way?
+    def new_min_lands(self):
+        self.min_lands = self.new_int_var(0, MAX_DECK_SIZE, ("min_lands",))
+        return self.min_lands
+
+    def new_mana_spend(self):
+        self.mana_spend = self.new_int_var(0, 100, ("mana_spend",))
+        return self.mana_spend
+
+    def new_max_mana_spend(self):
+        self.max_mana_spend = self.new_int_var(0, 100, ("max_mana_spend",))
+        return self.max_mana_spend
+
+    def new_total_lands(self):
+        self.total_lands = self.new_int_var(0, MAX_DECK_SIZE, ("total_lands",))
+        return self.total_lands
+
+    def new_pain(self):
+        self.pain = self.new_int_var(0, 100, ("pain",))  # BAKERT 100 has snuck in as a magic number in some places
+        return self.pain
+
+    def new_objective(self):
+        self.objective = self.new_int_var(-10000, 10000, ("objective",)) # BAKERT magic number
+        return self.objective
+
+    # BAKERT providing is kind of weird … why is it even necessary?
+    # BAKERT it's possible we want to change the behavior of `add` (and `NewIntVar`/`NewBoolVar`??) to store basically everything rather the explicitly calling remember
+    # BAKERT this is not quite right "4 Fetid Heath 4"
+    def new_providing(self, turn: int, resource: Resource, sources: list[IntVar]) -> None:
+        self.providing[(turn, resource)] = sources
+
+@dataclass(eq=True, frozen=True, order=True)
+class BasicLandType:
+    name: str
+    produces: Color
+
+    def __repr__(self) -> str:
+        return f"{self.name} Type"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+PlainsType = BasicLandType("Plains", W)
+IslandType = BasicLandType("Island", U)
+SwampType = BasicLandType("Swamp", B)
+MountainType = BasicLandType("Mountain", R)
+ForestType = BasicLandType("Forest", G)
+
+all_basic_land_types = {PlainsType, IslandType, SwampType, MountainType, ForestType}
 
 
 class Zone(Enum):
@@ -213,29 +315,29 @@ class Land(Card):
                 return True
         return False
 
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict["Land", cp_model.IntVar]) -> IntVar:
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
         raise NotImplementedError
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         raise NotImplementedError
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Land):
             return NotImplemented
-        return self.produces == other.produces
+        return self == other
 
     def __lt__(self, other: object) -> bool:
         if not isinstance(other, Land):
             return NotImplemented
-        return self.produces < other.produces  # BAKERT this won't sort White first which we probably want
+        return self.produces < other.produces or (self.produces == other.produces and self.name < other.name)
 
 
 class Conditional(Land):
     def untapped_if(self, model: Model, turn: int, needed: int, enablers: cp_model.LinearExprT, land_var: cp_model.IntVar) -> cp_model.IntVar:
-        untapped_var = model.NewBoolVar(f"{self.name}_Untapped_On_T{turn}")
+        untapped_var = model.new_bool_var((self, turn, UNTAPPED))
         model.add(enablers >= needed).OnlyEnforceIf(untapped_var)  # type: ignore
         model.add(enablers < needed).OnlyEnforceIf(untapped_var.Not())
-        makes_mana_var = model.NewIntVar(0, 4, f"{self.name} T{turn}")
+        makes_mana_var = model.new_int_var(0, 4, (self, turn))
         model.add(makes_mana_var == land_var).OnlyEnforceIf(untapped_var)
         model.add(makes_mana_var == 0).OnlyEnforceIf(untapped_var.Not())
         return makes_mana_var
@@ -243,14 +345,14 @@ class Conditional(Land):
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Basic(Land):
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict[Land, cp_model.IntVar]) -> IntVar:
-        return land_vars[self]
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
+        return model.lands[self]
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         contributions: Contributions = {}
         for color_combination in constraint.color_combinations():
             if self.can_produce_any(color_combination):
-                contributions[color_combination] = land_vars[self]
+                contributions[color_combination] = model.lands[self]
             else:
                 contributions[color_combination] = 0
         return contributions
@@ -258,14 +360,14 @@ class Basic(Land):
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Tapland(Land):
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict["Land", cp_model.IntVar]) -> IntVar:
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
         return 0
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         contributions: Contributions = {}
         for color_combination in constraint.color_combinations():
             if constraint.turn > 1 and self.can_produce_any(color_combination):
-                contributions[color_combination] = land_vars[self]
+                contributions[color_combination] = model.lands[self]
             else:
                 contributions[color_combination] = 0
         return contributions
@@ -281,20 +383,20 @@ class BasicTypeCaring(Conditional):
         needed = frozenset({basic_land_type for basic_land_type in all_basic_land_types if basic_land_type.produces in self.produces})
         object.__setattr__(self, "basic_land_types_needed", needed)
 
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict[Land, cp_model.IntVar]) -> IntVar:
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
         if self.zone == Zone.BATTLEFIELD and turn == 1:
             return 0
-        enabling_lands = {var for land, var in land_vars.items() if land.has_basic_land_types(self.basic_land_types_needed)}
+        enabling_lands = {var for land, var in model.lands.items() if land.has_basic_land_types(self.basic_land_types_needed)}
         # This crudely models the difficulty of playing a Snarl untapped after t1 but overestimates that difficulty by assuming you always play an enabling land each turn
         needed = need_untapped(turn) if self.zone == Zone.BATTLEFIELD else num_lands(turn, turn)
         enablers = sum(enabling_lands)
-        return self.untapped_if(model, turn, needed, enablers, land_vars[self])
+        return self.untapped_if(model, turn, needed, enablers, model.lands[self])
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         contributions: Contributions = {}
         for color_combination in constraint.color_combinations():
             if self.can_produce_any(color_combination):
-                contributions[color_combination] = land_vars[self]
+                contributions[color_combination] = model.lands[self]
             else:
                 contributions[color_combination] = 0
         return contributions
@@ -312,11 +414,11 @@ class Snarl(BasicTypeCaring):
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Filter(Conditional):
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict[Land, cp_model.IntVar]) -> IntVar:
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
         if turn <= 1:
             return 0
         enabling_lands = []
-        for land, var in land_vars.items():
+        for land, var in model.lands.items():
             # BAKERT If your hand is ALL filters then you can't get kickstarted on t3+ either, and we don't account for that here
             # On the other hand if we exclude filters on turn 3+ then we miss going Island -> Sunken Ruins -> Fetid Heath for W
             if turn <= 2 and isinstance(land, Filter):
@@ -325,37 +427,37 @@ class Filter(Conditional):
                 enabling_lands.append(var)
         needed = need_untapped(turn)
         enablers = sum(enabling_lands)
-        return self.untapped_if(model, turn, needed, enablers, land_vars[self])
+        return self.untapped_if(model, turn, needed, enablers, model.lands[self]) # BAKERt rmeove this param in favor of reading it from model
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         m, n, _ = self.produces
-        land_var = land_vars[self]
-        contributions = {}
+        land_var = model.lands[self]
+        contributions: Contributions = {}
 
         # Eject early saying we can only make colorless mana if it's turn 1, or we don't make any of the colors requested.
         if constraint.turn == 1 or not any(self.can_produce_any(c) for c in constraint.color_combinations()):
             return {color_combination: land_var if C in color_combination else 0 for color_combination in constraint.color_combinations()}
 
-        c_sources = model.NewIntVar(0, self.max, f"C_sources_from_{self.name}_for_{constraint}")
+        c_sources = model.new_int_var(0, self.max, (self, constraint))  # BAKERT Constraint should never be in key - just provide the turn and the resource?
         model.add(c_sources <= land_var)  # BAKERT this needs to be mutex with the colored stuff
-        mm_sources = model.NewIntVar(0, self.max * 2, f"{self.name} {m}{m} {constraint}")
+        mm_sources = model.new_int_var(0, self.max * 2, (self, constraint, f"{m}{m}"))
         model.add(mm_sources <= land_var * 2)
-        mn_sources = model.NewIntVar(0, self.max * 2, f"{self.name} {m}{n} {constraint}")
+        mn_sources = model.new_int_var(0, self.max * 2, (self, constraint, f"{m}{n}"))
         model.add(mn_sources <= land_var * 2)
-        nn_sources = model.NewIntVar(0, self.max * 2, f"{self.name} {n}{n} {constraint}")
+        nn_sources = model.new_int_var(0, self.max * 2, (self, constraint, f"{n}{n}"))
         model.add(nn_sources <= land_var * 2)
-        m_consumed = model.NewIntVar(0, self.max, f"{m}_consumed_by_{self.name}_for_{constraint}")
-        n_consumed = model.NewIntVar(0, self.max, f"{n}_consumed_by_{self.name}_for_{constraint}")
+        m_consumed = model.new_int_var(0, self.max, (self, constraint, f"{m} consumed"))
+        n_consumed = model.new_int_var(0, self.max, (self, constraint, f"{n} consumed"))
         model.add(m_consumed <= land_var)
         model.add(n_consumed <= land_var)
         model.add((m_consumed + n_consumed) * 2 == mm_sources + mn_sources + nn_sources)
-        model.add(mm_sources + mn_sources + nn_sources - m_consumed - n_consumed == land_var)
-        active = model.NewBoolVar(f"{self.name}_can_make_colored_mana_for_{constraint}")
+        model.add(mm_sources + mn_sources + nn_sources - m_consumed - n_consumed == land_var)  # type: ignore
+        active = model.new_bool_var((self, constraint, "can make colored mana"))
 
         # BAKERT exclude other filterlands if turn 2, but it gets more complicated after that
         # BAKERT consider giving this and basically everything a variable name for greater debuggability
         # BAKERT this is essentially repeated code from untapped_rules, but actually we're enforcing slightly different logic there!
-        enablers = sum(var for land, var in land_vars.items() if land.can_produce_any({m, n}) and not isinstance(land, Filter))
+        enablers = sum(var for land, var in model.lands.items() if land.can_produce_any({m, n}) and not isinstance(land, Filter))
         required = need_untapped(constraint.turn)  # BAKERT need_untapped now a bad name for this func
         model.add(enablers >= required).OnlyEnforceIf(active)
         model.add(enablers < required).OnlyEnforceIf(active.Not())
@@ -394,16 +496,16 @@ class Bicycle(Tapland):
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Pain(Land):
-    pain: bool = True
+    painful: bool = True
 
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict[Land, cp_model.IntVar]) -> IntVar:
-        return land_vars[self]
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
+        return model.lands[self]
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         contributions: Contributions = {}
         for color_combination in constraint.color_combinations():
             if self.can_produce_any(color_combination):
-                contributions[color_combination] = land_vars[self]
+                contributions[color_combination] = model.lands[self]
             else:
                 contributions[color_combination] = 0
         return contributions
@@ -412,31 +514,31 @@ class Pain(Land):
 # BAKERT complicated to explain this only makes U for instants on t1, and it only makes B on your own turn, and only if you have another land! For now, it's an Underground Sea
 @dataclass(eq=True, frozen=True, repr=False)
 class RiverOfTearsLand(Land):
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict["Land", cp_model.IntVar]) -> IntVar:
-        return land_vars[self]
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
+        return model.lands[self]
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         contributions: Contributions = {}
         for color_combination in constraint.color_combinations():
             if U in color_combination or B in color_combination:
-                contributions[color_combination] = land_vars[self]
+                contributions[color_combination] = model.lands[self]
         return contributions
 
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Tango(Conditional):
-    def untapped_rules(self, model: Model, turn: int, land_vars: dict[Land, cp_model.IntVar]) -> IntVar:
+    def untapped_rules(self, model: Model, turn: int) -> IntVar:
         if turn <= 2:
             return 0
         needed = num_lands(2, turn - 1)
-        enablers = sum(var for land, var in land_vars.items() if land.is_basic)
-        return self.untapped_if(model, turn, needed, enablers, land_vars[self])
+        enablers = sum(var for land, var in model.lands.items() if land.is_basic)
+        return self.untapped_if(model, turn, needed, enablers, model.lands[self])
 
-    def add_to_model(self, model: Model, constraint: "Constraint", land_vars: dict["Land", cp_model.IntVar]) -> Contributions:
+    def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         # BAKERT add_to_model and untapped_rules kind of counterfeit one another, can we combine them?
         if constraint.turn == 1:
             return {color_combination: 0 for color_combination in constraint.color_combinations()}
-        return {color_combination: land_vars[self] if self.can_produce_any(color_combination) else 0 for color_combination in constraint.color_combinations()}
+        return {color_combination: model.lands[self] if self.can_produce_any(color_combination) else 0 for color_combination in constraint.color_combinations()}
 
 
 Wastes = Basic("Wastes", None, "Basic Land", (C,))
@@ -559,96 +661,71 @@ RiverOfTears = RiverOfTearsLand("River of Tears", None, "Land", (U, B))
 all_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))
 
 
-@dataclass(eq=True, frozen=True, order=True)
-class Constraint:
-    required: ManaCost
-    turn: int = -1
-
-    def color_combinations(self) -> frozenset[ColorCombination]:
-        return find_color_combinations(self.required.colored_pips)
-
-    def __post_init__(self) -> None:
-        if self.turn == -1:
-            object.__setattr__(self, "turn", self.required.mana_value)
-
-    def __str__(self) -> str:
-        return self.__repr__()
-
-    def __repr__(self) -> str:
-        return f"T{self.turn} {self.required}"
-
-
 @dataclass
 class Solution:
-    constraints: frozenset[Constraint]
+    constraints: frozenset[Constraint]  # BAKERT don't thse live on model? should they?
     status: int
-    vars: dict[str, int]
-    store: dict[Constraint, dict[str | ColorCombination, Any]]
-    debug: bool = False
+    model: Model
+    solver: cp_model.CpSolver
+    # vars: dict[str, int]
+    # store: ConstraintVars
+    # debug: bool = False
     lands: dict[Land, int] = field(default_factory=dict, init=False)
     min_lands: int = field(init=False)
     mana_spend: int = field(init=False)
     max_mana_spend: int = field(init=False)
+    pain: int = field(init=False)
+    objective: int = field(init=False)
     # BAKERT keys are all str, but probably shouldn't be as they are truly Constraints and ColorCombinations
-    required: dict[str, dict[str, int]] = field(default_factory=dict, init=False)
-    sources: dict[str, dict[str, int]] = field(default_factory=dict, init=False)
+    # BAKERT it'd be nice to say Turn instead of int in a bunch of places
+    required: dict[int, dict[Resource, int]] = field(default_factory=dict, init=False)
+    sources: dict[int, dict[Resource, int]] = field(default_factory=dict, init=False)
     # BAKERT store and untapped are in a sense the same thing, combine them or just do better with all this in general?
-    untapped: dict[Constraint | str, int] = field(default_factory=dict, init=False)
+    # untapped: dict[Constraint | str, int] = field(default_factory=dict, init=False)
+    providing: dict[int, dict[Resource, dict[Land, int]]] = field(default_factory=dict, init=False)  # BAKERT typing work for lands with count
 
     def __post_init__(self) -> None:
-        lands = {land.name: land for land in all_lands}
-        for name, value in self.vars.items():
-            if name in lands and value > 0:
-                land = lands[name]
-                self.lands[land] = value
-            if name in ["min_lands", "mana_spend", "max_mana_spend"]:
-                self.__setattr__(name, value)
-            for prefix in ("required", "sources"):
-                if name.startswith(prefix):
-                    _, constraint, color_combination = name.split("_", 2)
-                    attr = getattr(self, prefix)
-                    if not attr.get(constraint):
-                        attr[constraint] = {}
-                    attr[constraint][color_combination] = value
-            if name.startswith("untapped"):
-                _, turn = name.split("_", 1)
-                self.untapped[turn] = value
+        self.lands = {land: self.solver.Value(var) for land, var in self.model.lands.items() if self.solver.Value(var) > 0}
+        self.min_lands = self.solver.Value(self.model.get(("min_lands",)))
+        # BAKERT get should probably be structured with turn, resource and key fields
+        # BAKERT pushing knowledge of how to form keys in here is bad
+        self.mana_spend = self.solver.Value(self.model.get(("mana_spend",)))
+        self.max_mana_spend = self.solver.Value(self.model.get(("max_mana_spend",))) # BAKERT this is also derivable from max fo constriants.turn so idk why we model it?
+        self.pain = self.solver.Value(self.model.pain) # BAKERT can also access vars here not use get … this is all a bit messy needs some thought
+        self.objective = self.solver.Value(self.model.get(("objective",)))
+        # BAKERT only if the solve value > 0
+        self.required = {k: self.solver.Value(v) for k, v in self.model.required.items() if self.solver.Value(v) > 0}
+        self.sources = {k: self.solver.Value(v) for k, v in self.model.sources.items() if self.solver.Value(v) > 0}
+        # BAKERT converting var to string here sucks but something it's the numnber 0 or whatever
+        self.providing = {k: [f"{self.solver.Value(var)} {var.name}" for var in v if self.solver.Value(var) > 0] for k, v in self.model.providing.items()}
 
     @property
     def num_lands(self) -> int:
         return sum(self.lands.values())
 
+    @property
+    def total_lands(self) -> int:
+        return self.num_lands  # BAKERT only one of these two please
+
     def __repr__(self) -> str:
-        optimality = "not " if self.status != cp_model.OPTIMAL else ""
+        optimality = "not " if not self.status != cp_model.OPTIMAL else ""  # BAKERT should Solution know about cp_model?
         s = f"Solution ({optimality}optimal)\n\n"
         s += f"{self.num_lands} Lands (min {self.min_lands})\n\n"
+        s += f"Mana spend: {self.mana_spend}/{self.max_mana_spend}\n\n"
         for land in sorted(self.lands):
             s += f"{self.lands[land]} {land}\n"
-        s += f"\nMana spend: {self.mana_spend}/{self.max_mana_spend}\n\n"
-        # BAKERT this is a big mess and needs to be nicer
-        # BAKERT it's ugly to do this as string manipulation. Work on a datastructure instead. In fact provide concrete numbers from self.lands
-        import re
-        # BAKERT it'd be nice to remove all the lands that we aren't actually using in the solution, too. No point in seeing Crumbling Necropolis for every B cost when we have none
-
-        def clean(mess: Any) -> str:
-            mess = re.sub(r'\(0..\d+\)', '', str(mess)).replace("0, ", "").replace(", 0", "")
-            parts = mess.split(', ')
-            r = []
-            for part in parts:
-                lnd = next((l for l in self.lands if l.name in part), None)
-                if not lnd:
-                    continue
-                r.append(f"{self.lands[lnd]} {part.replace('[', '').replace("]", "")}")
-            return ", ".join(r)
+        s += "\n"
         for constraint in sorted(self.constraints):
             s += f"Constraint {constraint}\n"
-            for color_combination in sorted(constraint.color_combinations()):
-                # BAKERT it's kinda ugly how self.required and friends use strings - vivify instead? store does not which is even worse
-                s += f"T{constraint.turn} {color_combination} required={self.required[str(constraint)][str(color_combination)]} sources={self.sources[str(constraint)][str(color_combination)]} providing={clean(self.store[constraint][color_combination])}\n"
-            untapped = self.untapped.get("T" + str(constraint.turn), "")
-            providing = clean(self.store.get(constraint, {}).get("untapped", ""))
-            s += f"T{constraint.turn} untapped={untapped} providing={providing}\n"
-            s += "\n"
+            # BAKERT we end up with "4 Sunken Ruins 2" where we should have either "4 Sunken Ruins" or "4 Sunken Ruins T2"
+            # BAKERT should constraint provide .resources() that includes UNTAPPED instead of using color_combinations and tacking it on?
+            resources: list[Resource] = sorted(constraint.color_combinations()) + [UNTAPPED]  # BAKERT literal constant
+            for resource in resources:
+                s += f"T{constraint.turn} {resource} "
+                s += f"required={self.required[(constraint.turn, resource)]} "
+                s += f"sources={self.sources[(constraint.turn, resource)]} "
+                s += f"providing={", ".join(self.providing[(constraint.turn, resource)])}\n"
+            s += f"\n{self.objective}\n"
         return s
 
     def __str__(self) -> str:
@@ -675,18 +752,16 @@ def solve(constraints: frozenset[Constraint], lands: frozenset[Land] | None = No
         lands = all_lands
     model = define_model(constraints, lands)
     solver = cp_model.CpSolver()
-    status = solver.solve(model.model)
+    status = solver.solve(model.model)  # BAKERT would be nice to not stutter here
     if status != cp_model.OPTIMAL and status != cp_model.FEASIBLE:
         return None
-    # BAKERT could pass in model and solver rather than reading it all here?
-    return Solution(constraints, status, {var.name: solver.Value(var) for var in model.vars}, model.store)
+    return Solution(constraints, status, model, solver)
 
 
 # BAKERT this function is too large, break it up
 def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> Model:
-    model = Model()
-    # BAKERT this isn't required, it's just to make debugging easier
     possible_lands = viable_lands(find_colors(constraints), lands)
+    model = Model(possible_lands, debug=True)
 
     # BAKERT really need to type alias ColorCombination if it's not possible to annotate with type
     # BAKERT can we just make color_vars as we need them now they are not passed in to add_to_model
@@ -701,11 +776,9 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
                 color_vars[constraint] = {}
                 sources[constraint] = {}
             if color_combination not in color_vars[constraint]:
-                color_vars[constraint][color_combination] = model.NewIntVar(0, MAX_DECK_SIZE, f"{constraint} {color_combination}")  # BAKERT is this redundant with any of the more recently added?
+                color_vars[constraint][color_combination] = model.new_has(constraint.turn, color_combination)
                 sources[constraint][color_combination] = []
         # BAKERT now unused? untapped_sources[constraint] = []
-
-    land_vars = {land: model.NewIntVar(0, land.max, land.name) for land in possible_lands}
 
     # BAKERT treating each constraint as independent isn't quite right. If you sac a land for RR to play something you can't sac it for UU to play something else, so it's not totally independent
     # So we need to ask lands "add_to_model" passing in all constraints?
@@ -716,36 +789,41 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
             required_untapped = need_untapped(constraint.turn)
         else:
             required_untapped = 0
-        for land in land_vars:
+        for land in model.lands:
             # BAKERT we want to be able to think about untappedness here, too. You can only meet a requirement that's of mana value N if you're producing N mana, obviously
             # we want to check that there are enough lands that CAN be part of this cost and ALSO come into play untapped on constraint.turn
             # This is not relevant if constraint.turn > constraint.required.mana_value
             # BAKERT if you ask about U on turn 2 as part of UU and part of UW and part of 1U we want to be able to give different answers without them all being added together
-            contributions = land.add_to_model(model, constraint, land_vars)
+            contributions = land.add_to_model(model, constraint)
             for color_combination, contribution in contributions.items():
                 sources[constraint][color_combination].append(contribution)
         # BAKERT frank should return the powerset-y thing not what it currently returns. or we can do that here if necessary
         requirements = frank(constraint)
         for color_combination, required in requirements.items():
             # BAKERT
-            r = model.NewIntVar(0, MAX_DECK_SIZE, f"required_{constraint}_{color_combination}")
+            r = model.new_required(constraint.turn, color_combination)
             model.add(r == required)
-            model.add(color_vars[constraint][color_combination] >= required)
+            model.add(color_vars[constraint][color_combination] >= required)  # BAKERT looks like color_vars IS used
 
         if required_untapped:
             # BAKERT this whole section isn't really how we do things now, push the color checking/generic part into the Land classes?
             generic_ok = len(constraint.required.pips) > len(constraint.required.colored_pips)
             admissible_untapped = {}
-            for land, var in land_vars.items():
+            for land, var in model.lands.items():
                 makes_one_of_the_colors = any(land.can_produce_any(colors) for colors in frank(constraint))
                 if generic_ok or makes_one_of_the_colors:
                     admissible_untapped[land] = var
             # BAKERT "save" the amount of untapped lands at each constraint-critical turn and use that in the overall score
             # BAKERT is the third arg to untapped_rules land_vars, or admissible_untapped? I think land_vars?
-            lands_that_are_untapped_this_turn = [land.untapped_rules(model, constraint.turn, land_vars) for land in admissible_untapped]
-            model.remember(constraint, "untapped", lands_that_are_untapped_this_turn)
+            lands_that_are_untapped_this_turn = [land.untapped_rules(model, constraint.turn) for land in admissible_untapped]
+            model.new_providing(constraint.turn, UNTAPPED, lands_that_are_untapped_this_turn)
             untapped_this_turn = sum(lands_that_are_untapped_this_turn)
-            untapped = model.NewIntVar(0, MAX_DECK_SIZE, f"untapped_T{constraint.turn}")
+            # BAKERT this is always equal to the required but surely it should exceed the required when we have more untapped lands than that? Or am I just lost in the sauce?
+            untapped_sources = model.new_sources(constraint.turn, UNTAPPED)
+            model.add(untapped_sources == untapped_this_turn)
+            untapped = model.new_required(constraint.turn, UNTAPPED)
+            # BAKERT untapped = model.new_int_var(0, MAX_DECK_SIZE, (constraint.turn, UNTAPPED)) # BAKERT maybe make all these magic strings into enum constants
+            # BAKERT somewhere in all this we've stopped storing ALL vars and so we can't inspect the whole mess
             model.add(untapped == untapped_this_turn)
             model.add(untapped_this_turn >= required_untapped)
 
@@ -753,39 +831,38 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
             # untapped_sources[constraint].append(land.untapped_rules(model, constraint.turn, land_vars))  # BAKERT do we ever use color_vars?
             # model.add(sum(untapped_sources[constraint]) >= required_untapped)
 
-    # BAKERT it's true to say that Fetid Heath cannot contribute even to T2 UB (B) as well as to T2 UB (U, B) more obviously, because it can't ever be tapped in that scenario in a way that make B or a UB spell.
-    # But we are allowing it for T2 UB (B) and we should not. Might be specific to filters.
     for constraint, contributions_by_color in sources.items():
         for color_combination, contribs in contributions_by_color.items():
-            sources = model.NewIntVar(0, MAX_DECK_SIZE, f"sources_{constraint}_{color_combination}")
-            # BAKERT I really want to see contribs in solution, can that be done? hijack it inside Model???
-            model.add(sources == sum(contribs))  # BAKERT is there a better or more standard way of providing these vars that also do work?
-            model.remember(constraint, color_combination, contribs)  # BAKERT probably a better way to do this
+            # BAKERT not a great name
+            # sources_of_this = model.new_int_var(0, MAX_DECK_SIZE, (constraint, color_combination, "sources"))
+            sources_of_this = model.new_sources(constraint.turn, color_combination)
+            model.add(sources_of_this == sum(contribs))  # BAKERT is there a better or more standard way of providing these vars that also do work?
+            model.new_providing(constraint.turn, color_combination, contribs)  # BAKERT probably a better way to do this
             model.add(color_vars[constraint][color_combination] == sum(contribs))
 
-    min_lands = model.NewIntVar(0, MAX_DECK_SIZE, "min_lands")
+    min_lands = model.new_min_lands()  # BAKERT this is an ugly construction
     model.add(min_lands == max(num_lands_required(constraint) for constraint in constraints))
-    total_lands = model.NewIntVar(0, MAX_DECK_SIZE, "total_lands")
-    model.add(total_lands == sum(land_vars.values()))
+    total_lands = model.new_total_lands()
+    model.add(total_lands == sum(model.lands.values()))
     model.add(total_lands >= min_lands)
 
     # BAKERT I think this is really broken if, say, our only 1-2 drops are Priest of Fell Rites and Tainted Indulgence
-    mana_spend = model.NewIntVar(0, 100, "mana_spend")  # BAKERT make all these strings constants?
-    max_mana_spend = model.NewIntVar(0, 100, "max_mana_spend")
+    mana_spend = model.new_mana_spend()
+    max_mana_spend = model.new_max_mana_spend()
     max_mana_spend_per_turn, mana_spend_per_turn = [], []
     max_turn = max(constraint.turn for constraint in constraints) + 1
     for turn in range(1, max_turn):
         # BAKERT the other place where we do this kind of thing we use admissible_untapped not land_vars … is this a bug? Does it matter?
-        untapped_this_turn = sum(land.untapped_rules(model, turn, land_vars) for land in land_vars)
+        untapped_this_turn = sum(land.untapped_rules(model, turn) for land in model.lands)
         # BAKERT this isn't quite right it's kind of 1, turn (independently executed) and it's kind of turn, turn (if you spent every turn so far)
         needed = num_lands(turn, turn)
-        enough_untapped = model.NewBoolVar(f"can_spend_mana_t{turn}")
+        enough_untapped = model.new_bool_var((turn, "can spend mana"))  # BAKERT get consistent about underscores or whatever
         model.add(untapped_this_turn >= needed).OnlyEnforceIf(enough_untapped)
         model.add(untapped_this_turn < needed).OnlyEnforceIf(enough_untapped.Not())
-        max_mana_spend_this_turn = model.NewIntVar(turn, turn, f"max_mana_spend_t{turn}")
+        max_mana_spend_this_turn = model.new_int_var(turn, turn, (turn, "max_mana_spend"))  # BAKERT turn being just an int makes this "risky" … maybe key formation is a func somewhere? Maybe Model *does* know about land, required, etc. Or another layer on top of Model
         model.add(max_mana_spend_this_turn == turn)
         max_mana_spend_per_turn.append(max_mana_spend_this_turn)
-        mana_spend_this_turn = model.NewIntVar(turn - 1, turn, f"mana_spend_t{turn}")
+        mana_spend_this_turn = model.new_int_var(turn - 1, turn, (turn, "mana_spend"))
         model.add(mana_spend_this_turn == turn).OnlyEnforceIf(enough_untapped)
         model.add(mana_spend_this_turn == turn - 1).OnlyEnforceIf(enough_untapped.Not())
         mana_spend_per_turn.append(mana_spend_this_turn)
@@ -795,8 +872,8 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     # BAKERT this should maybe be modeled as pain spent in first N turns rather than just how many painlands
     # BAKERT t1 combo don't care about pain, t20 control cares a lot, I think?
     # BAKERT should this be pushed into add_to_model? Should everything? Or rename it colored_sources?
-    pain = model.NewIntVar(0, 100, "Pain")  # BAKERT 100 has snuck in as a magic number in some places
-    model.add(pain == sum(land_vars[land] for land in possible_lands if land.painful))
+    pain = model.new_pain()
+    model.add(pain == sum(model.lands[land] for land in model.lands if land.painful))
 
     # Give a little credit for extra sources. if you can double spell sometimes more your manabase is better
     all_colored_sources = []
@@ -805,11 +882,11 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     # BAKERT and earlier matters somehow?
     deck_colors = {color for color in [constraint.color_combinations for constraint in constraints]}
     for color in deck_colors:
-        contributing_lands = sum([var for land, var in land_vars.items() if color in land.produces])
-        colored_sources = model.NewIntVar(0, MAX_DECK_SIZE, f"colored_sources_{color}")
+        contributing_lands = sum([var for land, var in model.lands.items() if color in land.produces])
+        colored_sources = model.new_int_var(0, MAX_DECK_SIZE, (color, "colored_sources"))
         model.add(colored_sources == contributing_lands)
         all_colored_sources.append(contributing_lands)
-    total_colored_sources = model.NewIntVar(0, MAX_DECK_SIZE, f"total_colored_sources")
+    total_colored_sources = model.new_int_var(0, MAX_DECK_SIZE, ("total_colored_sources",))
     model.add(total_colored_sources == sum(all_colored_sources))
 
     # BAKERT if a deck is playing 5+ drops it cares less about fitting in 24 lands than a deck curving out to 4
@@ -818,7 +895,12 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     # colored_sources = 14 to 120ish
     # pain = 0 to 24 (or calculate it differently)
     # BAKERT make vars for each part of the score and display them in solution
-    model.Maximize(mana_spend * 6 - total_lands * 10 - pain * 2 + total_colored_sources)
+    # BAKERT type: ignore here is bad
+    objective = model.new_objective()
+    # BAKERT normalize this over possible score
+    # BAKERT max_objective = max_mana_spend + 0 - 0 + len(deck_colors) * 60
+    model.add(objective == 1000 + mana_spend * 6 - total_lands * 10 - pain * 2 + total_colored_sources)
+    model.maximize(objective)  # type: ignore
 
     return model
 
@@ -895,10 +977,6 @@ def frank(constraint: Constraint, deck_size: int = 60) -> dict[ColorCombination,
         (3, 7): {60: 16, 80: 22, 99: 26, 40: 10},  # 4CCC Nyxbloom Ancient
     }
     color_set = constraint.color_combinations()  # BAKERT we seem to do this in a few places … do it inside Constraint or something?
-    # BAKERT
-    # color_set = {frozenset({color}) for color in constraint.required.colored_pips}
-    # if len(color_set) > 1:
-    #     color_set.add(frozenset(constraint.required.colored_pips))
     results = {}
     for colors in color_set:
         num_pips = len(colors)  # BAKERT sum(1 for c in constraint.required.colored_pips if c in colors)
@@ -1010,8 +1088,6 @@ EsperCharm = card("WUB")
 ForbidOnTurnFour = card("1UU", 4)
 WrathOfGod = card("2WW")
 
-# BAKERT River of Tears
-
 gifts = frozenset([PriestOfFellRites, HaakonStromgaldScourge, MagisterOfWorth, OptOnTurn2, SearchForAzcanta, CouncilsJudgment, EsperCharm, ForbidOnTurnFour, WrathOfGod])
 
 actual_twin = frozenset([GrimLavamancer, Pteramander, KikiJikiMirrorBreaker, DigThroughTime])
@@ -1024,12 +1100,6 @@ StarvingRevenant = card("2BB")
 ArchfiendOfIfnir = card("3BB")
 
 midnight_phoenix = frozenset([LamplightPhoenix, BigCyclingTurn, StarvingRevenant, ArchfiendOfIfnir])
-
-# BAKERT
-# Opt = card("U")
-# SwelteringSuns = card("1RR")
-# CracklingDrake = card("UURR")
-# izzet_twin = frozenset([Opt, BurstLightning, Pestermite, CracklingDrake, SwelteringSuns, DigThroughTime, KikiJikiMirrorBreaker])
 
 Cremate = card("B")
 GlimpseTheUnthinkable = card("UB")
@@ -1083,6 +1153,27 @@ KumenaTyrantOfOrazca = card("1GU")
 
 ug_merfolk = frozenset([CenoteScoutOnTwo, MasterOfThePearlTrident, KumenaTyrantOfOrazca])
 
+splash_gifts_ooze = frozenset([NecroticOoze, PriestOfFellRites, GiftsUngiven, BuriedAlive])
+
+wb_ooze = frozenset([NecroticOoze, PriestOfFellRites])
+
+KarmicGuide = card("3WW")
+ConspiracyTheorist = card("1R")
+# BAKERT why does this add Restless Vents and not Vivid Crag?
+ooze_kiki = frozenset([ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo])
+
+# BAKERT make these "real" unit tests
+def test_remembering_model_collision() -> None:
+    model = RememberingModel()
+    model.new_int_var(0, 1, ("test",))
+    model.new_int_var(0, 1, ("test", "other"))
+    found = False
+    try:
+        model.new_int_var(0, 2, ("test",))
+    except KeyCollision:
+        found = True
+    assert found
+
 
 def test_viable_lands() -> None:
     lands = frozenset({Plains, Island, Swamp, CelestialColonnade, StirringWildwood, CreepingTarPit})
@@ -1126,28 +1217,26 @@ def test_filter() -> None:
     # # BAKERT an actual test pls
     # model = Model()
     # constraint = card("CCWWUU")
-    # land_vars = {land: model.NewIntVar(0, land.max, land.name) for land in all_lands}
+    # land_vars = {land: model.new_int_var(0, land.max, land.name) for land in all_lands}
     # print(MysticGate.add_to_model(model, constraint, land_vars))
     pass
 
 
 def test_tango() -> None:
-    model = Model()
+    model = Model(all_lands)
     constraint = card("U")
-    land_vars = {land: model.NewIntVar(0, land.max, land.name) for land in all_lands}
-    contributions = PrairieStream.add_to_model(model, constraint, land_vars)
+    contributions = PrairieStream.add_to_model(model, constraint)
     assert contributions[ColorCombination({U})] == 0
     constraint = card("2U")
-    contributions = PrairieStream.add_to_model(model, constraint, land_vars)
-    assert contributions[ColorCombination({U})] == land_vars[PrairieStream]
+    contributions = PrairieStream.add_to_model(model, constraint)
+    assert contributions[ColorCombination({U})] == model.lands[PrairieStream]
 
 
 def test_add_to_model() -> None:
-    model = Model()
+    model = Model(all_lands)
     constraint = card("WU")
-    land_vars = {land: model.NewIntVar(0, land.max, land.name) for land in {Plains, Island, MysticGate, SunkenRuins}}
-    plains, island, mystic_gate = land_vars[Plains], land_vars[Island], land_vars[MysticGate]
-    contributions = MysticGate.add_to_model(model, constraint, land_vars)
+    plains, island, mystic_gate = model.lands[Plains], model.lands[Island], model.lands[MysticGate]
+    contributions = MysticGate.add_to_model(model, constraint)
     assert contributions[ColorCombination([W])] == mystic_gate
     assert contributions[ColorCombination([U])] == mystic_gate
     multicolor_contribs_s = str(contributions[ColorCombination([W, U])])
@@ -1157,17 +1246,23 @@ def test_add_to_model() -> None:
     # BAKERT can test a lot more here, and should
 
 
+def test_sort_lands() -> None:
+    lands = [GlacialFortress, FireLitThicket, SunkenRuins, AdarkarWastes]
+    assert sorted(lands) == [AdarkarWastes, GlacialFortress, SunkenRuins, FireLitThicket]
+
+
 def test_solve() -> None:
     solution = solve(mono_w_bodyguards, frozenset({Plains, Island, MysticGate}))
     assert solution
     assert solution.status == cp_model.OPTIMAL
-    assert solution.vars["Plains"] == 14
-    assert solution.vars.get("Island") is solution.vars.get("Mystic Gate") is None
+    print(solution)
+    assert solution.lands[Plains] == 14
+    assert solution.lands.get(Island) is solution.lands.get(MysticGate) is None
 
     solution = solve(azorius_taxes)
     assert solution
     assert solution.status == cp_model.OPTIMAL
-    assert solution.vars["total_lands"] == 23
+    assert solution.num_lands == 23
     assert solution.lands[PortTown] == 4
     assert solution.lands[Plains] == 10
     # BAKERT when we're more sure about what we want here, assert more. In particular 4 Mystic Gate?
@@ -1206,6 +1301,7 @@ def test_solve() -> None:
 
 
 def test() -> None:
+    test_remembering_model_collision()
     test_viable_lands()
     test_str_repr()
     test_basic_land_types()
@@ -1213,6 +1309,7 @@ def test() -> None:
     test_filter()
     test_tango()
     test_add_to_model()
+    test_sort_lands()
     test_solve()
 
 
@@ -1247,7 +1344,9 @@ def test() -> None:
 # But in a sense these are the same thing - {1}{B}{R} being pretty similar to {B}{R} so maybe they should both use the same representation?
 # perhaps best of all is if mana costs are frozen multisets but something knows how to present them in the right order?
 
+# BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
+
 if len(sys.argv) >= 2 and (sys.argv[1] == "--test" or sys.argv[1] == "-t"):
     test()
 else:
-    print(solve(ug_merfolk))
+    print(solve(ooze_kiki))
