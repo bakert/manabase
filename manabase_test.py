@@ -60,7 +60,6 @@ def test_filter() -> None:
     # # BAKERT an actual test pls
     # model = Model()
     # constraint = card("CCWWUU")
-    # land_vars = {land: model.new_int_var(0, land.max, land.name) for land in all_lands}
     # print(MysticGate.add_to_model(model, constraint, land_vars))
     pass
 

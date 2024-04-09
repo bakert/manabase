@@ -9,8 +9,6 @@ from ortools.sat.python import cp_model
 
 from remembering_model import RememberingModel
 
-MAX_DECK_SIZE = 100
-
 
 @dataclass
 class Weights:
@@ -180,7 +178,7 @@ class Model(RememberingModel):
     def __init__(self, deck: Deck, possible_lands: frozenset["Land"], weights: Weights, forced_lands: dict["Land", int] | None = None, debug: bool = False):
         super().__init__(debug)
         self.deck = deck
-        self.lands = {land: self.new_int_var(0, land.max, (land,)) for land in possible_lands}
+        self.lands = {land: self.new_int_var(0, land.max if land.max else deck.size, (land,)) for land in possible_lands}
         self.weights = weights
         if not forced_lands:
             forced_lands = {}
@@ -248,9 +246,9 @@ class Card:
     typeline: str
 
     @property
-    def max(self) -> int:
+    def max(self) -> int | None:
         # Some cards break this rule and have specific rules text to say so, including Seven Dwarves as well as unlimited
-        return MAX_DECK_SIZE if self.is_basic else 4
+        return None if self.is_basic else 4
 
     @property
     def is_basic(self) -> bool:
@@ -847,7 +845,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
     # BAKERT and earlier matters somehow?
     for color in deck.colors:
         contributing_lands = sum([var for land, var in model.lands.items() if color in land.produces])
-        colored_sources = model.new_int_var(0, MAX_DECK_SIZE, (color, "colored_sources"))
+        colored_sources = model.new_int_var(0, deck.size, (color, "colored_sources"))
         model.add(colored_sources == contributing_lands)
         all_colored_sources.append(contributing_lands)
     total_colored_sources = model.total_colored_sources
