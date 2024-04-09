@@ -55,7 +55,3 @@ class RememberingModel:
 
     def maximize(self, objective: cp_model.ObjLinearExprT) -> None:
         self.model.Maximize(objective)
-
-    # BAKERT do we want this on model not just access store? rename store to _store and check to _check?
-    def get(self, key: VarKey) -> ModelVar | None:
-        return self.store.get(key)
