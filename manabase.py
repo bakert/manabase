@@ -1,14 +1,17 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import total_ordering
-from typing import Callable, Any, Iterable, Literal, Hashable
+from typing import Iterable, Literal
 import sys
 
 from more_itertools import powerset
 from multiset import FrozenMultiset
 from ortools.sat.python import cp_model
 
+from remembering_model import KeyCollision, RememberingModel
+
 MAX_DECK_SIZE = 100
+
 
 @dataclass(frozen=True)
 @total_ordering
@@ -54,6 +57,7 @@ class ColorCombination(FrozenMultiset):
     def __str__(self) -> str:
         return self.__repr__()
 
+
 @dataclass(frozen=True)
 @total_ordering
 class ManaCost:
@@ -86,6 +90,7 @@ class ManaCost:
     def __str__(self) -> str:
         return self.__repr__()
 
+
 @dataclass(eq=True, frozen=True, order=True)
 class Constraint:
     required: ManaCost
@@ -106,8 +111,7 @@ class Constraint:
 
 
 IntVar = cp_model.IntVar | int
-ModelVar = cp_model.IntVar | cp_model.BoolVarT
-Contributions = dict[ColorCombination, IntVar]  # BAKERT should the key here be Resource not ColorCombination? why not?
+Contributions = dict[ColorCombination, IntVar]
 UNTAPPED = "untapped"
 Untapped = Literal["untapped"]
 Resource = ColorCombination | Untapped
@@ -115,82 +119,21 @@ ResourceVars = dict[Resource, list[IntVar]]
 ConstraintVars = dict[Constraint, ResourceVars]
 
 
-VarKey = tuple[Hashable, ...]
-class KeyCollision(Exception):
-    pass
-# RememberingModel is an extension to cp_model.CpModel that remembers the vars you add to the model
-# under a "key" which is a tuple passed when creating the var. It has no knowledge of the problem domain.
-class RememberingModel:
-    def __init__(self, debug: bool = False) -> None:
-        self.debug = debug
-        self.model = cp_model.CpModel()
-        self.store = {}
-        self._check = {}
-        # : dict[VarKey, IntVar] = field(default_factory=dict, init=False)
-        # check: dict[VarKey, str] = field(default_factory=dict, init=False)
-
-    def _var_name(self, var_type: type[int] | type[bool], lbound: int | None, ubound: int | None, key: VarKey) -> str:
-        # For readability, we store variables under pretty simple names but here we make sure our model has
-        # no collisions despite the simplicity of the variable names.
-        name = " ".join(str(v) for v in key)
-        record = (var_type, lbound, ubound, key)
-        existing = self._check.get(name)
-        if existing and existing != record:
-            raise KeyCollision(f"{record} conflicts with {existing}")
-        self._check[name] = record
-        return name
-
-    def add(self, constraint: cp_model.BoundedLinearExpression | bool) -> cp_model.Constraint:
-        if self.debug:
-            print("[MODEL][CON]", constraint, file=sys.stderr)
-        return self.model.Add(constraint)
-
-    def new_int_var(self, lbound: int, ubound: int, key: VarKey) -> cp_model.IntVar:
-        name = self._var_name(int, lbound, ubound, key)
-        v = self.model.NewIntVar(lbound, ubound, name)
-        self.store[key] = v
-        if self.debug:
-            print("[MODEL][INT]", v, file=sys.stderr)
-        return v
-
-    def new_bool_var(self, key: VarKey) -> cp_model.BoolVarT:
-        name = self._var_name(bool, None, None, key)
-        v = self.model.NewBoolVar(name)
-        self.store[key] = v
-        if self.debug:
-            print("[MODEL][BOOL]", v, file=sys.stderr)
-        return v
-
-    def maximize(self, objective: cp_model.ObjLinearExprT) -> None:
-        self.model.Maximize(objective)
-
-    # BAKERT do we want this on model not just access store? rename store to _store and check to _check?
-    def get(self, key: VarKey) -> ModelVar | None:
-        return self.store.get(key)
-
-
 class Model(RememberingModel):
     def __init__(self, possible_lands: frozenset["Land"], debug: bool = False):
         super().__init__(debug)
         self.lands = {land: self.new_int_var(0, land.max, (land,)) for land in possible_lands}
         # vars: list[ModelVar] = field(default_factory=list) BAKERT we must expose self.model.store the same way we exposed vars for full debug mode read everything
-        self.min_lands = None # self.min_lands: IntVar = field(init=False)
-        self.mana_spend = None # self.mana_spend: IntVar = field(init=False)
-        self.max_mana_spend = None # self.max_mana_spend: IntVar = field(init=False)
-        self.total_lands = None # self.total_lands: IntVar = field(init=False)
-        # self.lands = None # self.lands: dict["Land", ModelVar] = field(default_factory=dict, init=False)  # BAKERT forward ref
-        self.has = {} # self.has: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
-        self.required = {} # self.required: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
-        self.sources = {} # self.sources: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
-        self.providing = {} # self.providing: dict[tuple[int, Resource], list[IntVar]] = field(default_factory=dict, init=False)
-        self.objective = None # BAKERT it's weird to set these all to None, just init here?
-        self.pain = None
-
-    # BAKERT abysmal name
-    def new_has(self, turn: int, resource: Resource) -> cp_model.IntVar:
-        # BAKERT we use the two line pattern here, inconsistently
-        self.has[(turn, resource)] = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "has"))  # BAKERT is this redundant with any of the more recently added?
-        return self.has[(turn, resource)]
+        self.min_lands = self.new_int_var(0, MAX_DECK_SIZE, ("min_lands",))
+        self.mana_spend = self.new_int_var(0, 100, ("mana_spend",))
+        self.max_mana_spend = self.new_int_var(0, 100, ("max_mana_spend",))
+        self.total_lands = self.new_int_var(0, MAX_DECK_SIZE, ("total_lands",))
+        self.pain = self.new_int_var(0, 100, ("pain",))  # BAKERT 100 has snuck in as a magic number in some places
+        self.objective = self.new_int_var(-10000, 10000, ("objective",))  # BAKERT magic number
+        self.has: dict[tuple[int, Resource], cp_model.IntVar] = {}  # self.has: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.required: dict[tuple[int, Resource], cp_model.IntVar] = {}  # self.required: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.sources: dict[tuple[int, Resource], cp_model.IntVar] = {}  # self.sources: dict[tuple[int, Resource], IntVar] = field(default_factory=dict, init=False)
+        self.providing: dict[tuple[int, Resource], list[IntVar]] = {}  # self.providing: dict[tuple[int, Resource], list[IntVar]] = field(default_factory=dict, init=False)
 
     def new_required(self, turn: int, resource: Resource) -> cp_model.IntVar:
         v = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "required"))
@@ -199,39 +142,16 @@ class Model(RememberingModel):
 
     def new_sources(self, turn: int, resource: Resource) -> cp_model.IntVar:
         v = self.new_int_var(0, MAX_DECK_SIZE, (turn, resource, "sources"))  # BAKERT near-identical to required
+        # BAKERT should we complain if we've seen this exact intvar before? any needs?
         self.sources[(turn, resource)] = v
         return v  # BAKERT we could check for prior existence and not bother if found?
-
-    # BAKERT maybe init these as the class initializes? Too much in the model that way?
-    def new_min_lands(self):
-        self.min_lands = self.new_int_var(0, MAX_DECK_SIZE, ("min_lands",))
-        return self.min_lands
-
-    def new_mana_spend(self):
-        self.mana_spend = self.new_int_var(0, 100, ("mana_spend",))
-        return self.mana_spend
-
-    def new_max_mana_spend(self):
-        self.max_mana_spend = self.new_int_var(0, 100, ("max_mana_spend",))
-        return self.max_mana_spend
-
-    def new_total_lands(self):
-        self.total_lands = self.new_int_var(0, MAX_DECK_SIZE, ("total_lands",))
-        return self.total_lands
-
-    def new_pain(self):
-        self.pain = self.new_int_var(0, 100, ("pain",))  # BAKERT 100 has snuck in as a magic number in some places
-        return self.pain
-
-    def new_objective(self):
-        self.objective = self.new_int_var(-10000, 10000, ("objective",)) # BAKERT magic number
-        return self.objective
 
     # BAKERT providing is kind of weird … why is it even necessary?
     # BAKERT it's possible we want to change the behavior of `add` (and `NewIntVar`/`NewBoolVar`??) to store basically everything rather the explicitly calling remember
     # BAKERT this is not quite right "4 Fetid Heath 4"
     def new_providing(self, turn: int, resource: Resource, sources: list[IntVar]) -> None:
         self.providing[(turn, resource)] = sources
+
 
 @dataclass(eq=True, frozen=True, order=True)
 class BasicLandType:
@@ -427,7 +347,7 @@ class Filter(Conditional):
                 enabling_lands.append(var)
         needed = need_untapped(turn)
         enablers = sum(enabling_lands)
-        return self.untapped_if(model, turn, needed, enablers, model.lands[self]) # BAKERt rmeove this param in favor of reading it from model
+        return self.untapped_if(model, turn, needed, enablers, model.lands[self])  # BAKERt rmeove this param in favor of reading it from model
 
     def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         m, n, _ = self.produces
@@ -661,6 +581,7 @@ RiverOfTears = RiverOfTearsLand("River of Tears", None, "Land", (U, B))
 all_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))
 
 
+# BAKERT Solution is such a mirror of Model that I wonder if they should be combined
 @dataclass
 class Solution:
     constraints: frozenset[Constraint]  # BAKERT don't thse live on model? should they?
@@ -678,25 +599,27 @@ class Solution:
     objective: int = field(init=False)
     # BAKERT keys are all str, but probably shouldn't be as they are truly Constraints and ColorCombinations
     # BAKERT it'd be nice to say Turn instead of int in a bunch of places
-    required: dict[int, dict[Resource, int]] = field(default_factory=dict, init=False)
-    sources: dict[int, dict[Resource, int]] = field(default_factory=dict, init=False)
+    # BAKERT typing workd
+    required: dict[tuple[int, Resource], int] = field(default_factory=dict, init=False)
+    sources: dict[tuple[int, Resource], int] = field(default_factory=dict, init=False)
     # BAKERT store and untapped are in a sense the same thing, combine them or just do better with all this in general?
     # untapped: dict[Constraint | str, int] = field(default_factory=dict, init=False)
-    providing: dict[int, dict[Resource, dict[Land, int]]] = field(default_factory=dict, init=False)  # BAKERT typing work for lands with count
+    # BAKERT at bottom we still have a list of strs here, would be nice to have something more structured
+    providing: dict[tuple[int, Resource], list[str]] = field(default_factory=dict, init=False)  # BAKERT typing work for lands with count
 
     def __post_init__(self) -> None:
         self.lands = {land: self.solver.Value(var) for land, var in self.model.lands.items() if self.solver.Value(var) > 0}
-        self.min_lands = self.solver.Value(self.model.get(("min_lands",)))
+        self.min_lands = self.solver.Value(self.model.min_lands)  # BAKERT I bet model.get is no longer in use?
         # BAKERT get should probably be structured with turn, resource and key fields
         # BAKERT pushing knowledge of how to form keys in here is bad
-        self.mana_spend = self.solver.Value(self.model.get(("mana_spend",)))
-        self.max_mana_spend = self.solver.Value(self.model.get(("max_mana_spend",))) # BAKERT this is also derivable from max fo constriants.turn so idk why we model it?
-        self.pain = self.solver.Value(self.model.pain) # BAKERT can also access vars here not use get … this is all a bit messy needs some thought
-        self.objective = self.solver.Value(self.model.get(("objective",)))
+        self.mana_spend = self.solver.Value(self.model.mana_spend)
+        self.max_mana_spend = self.solver.Value(self.model.max_mana_spend)  # BAKERT this is also derivable from max fo constriants.turn so idk why we model it?
+        self.pain = self.solver.Value(self.model.pain)  # BAKERT can also access vars here not use get … this is all a bit messy needs some thought
+        self.objective = self.solver.Value(self.model.objective)
         # BAKERT only if the solve value > 0
         self.required = {k: self.solver.Value(v) for k, v in self.model.required.items() if self.solver.Value(v) > 0}
         self.sources = {k: self.solver.Value(v) for k, v in self.model.sources.items() if self.solver.Value(v) > 0}
-        # BAKERT converting var to string here sucks but something it's the numnber 0 or whatever
+        # BAKERT this is a type error because var could be an int. That won't happen because we only use int for 0 but maybe handle or maybe always return an IntVar of 0 not 0?
         self.providing = {k: [f"{self.solver.Value(var)} {var.name}" for var in v if self.solver.Value(var) > 0] for k, v in self.model.providing.items()}
 
     @property
@@ -708,7 +631,7 @@ class Solution:
         return self.num_lands  # BAKERT only one of these two please
 
     def __repr__(self) -> str:
-        optimality = "not " if not self.status != cp_model.OPTIMAL else ""  # BAKERT should Solution know about cp_model?
+        optimality = "not " if self.status != cp_model.OPTIMAL else ""  # BAKERT should Solution know about cp_model?
         s = f"Solution ({optimality}optimal)\n\n"
         s += f"{self.num_lands} Lands (min {self.min_lands})\n\n"
         s += f"Mana spend: {self.mana_spend}/{self.max_mana_spend}\n\n"
@@ -719,13 +642,14 @@ class Solution:
             s += f"Constraint {constraint}\n"
             # BAKERT we end up with "4 Sunken Ruins 2" where we should have either "4 Sunken Ruins" or "4 Sunken Ruins T2"
             # BAKERT should constraint provide .resources() that includes UNTAPPED instead of using color_combinations and tacking it on?
-            resources: list[Resource] = sorted(constraint.color_combinations()) + [UNTAPPED]  # BAKERT literal constant
+            resources = sorted(constraint.color_combinations()) + [UNTAPPED]  # BAKERT literal constant
             for resource in resources:
                 s += f"T{constraint.turn} {resource} "
                 s += f"required={self.required[(constraint.turn, resource)]} "
                 s += f"sources={self.sources[(constraint.turn, resource)]} "
                 s += f"providing={", ".join(self.providing[(constraint.turn, resource)])}\n"
-            s += f"\n{self.objective}\n"
+            s += "\n"
+        s += f"\n{self.objective}\n"
         return s
 
     def __str__(self) -> str:
@@ -761,7 +685,7 @@ def solve(constraints: frozenset[Constraint], lands: frozenset[Land] | None = No
 # BAKERT this function is too large, break it up
 def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> Model:
     possible_lands = viable_lands(find_colors(constraints), lands)
-    model = Model(possible_lands, debug=True)
+    model = Model(possible_lands)
 
     # BAKERT really need to type alias ColorCombination if it's not possible to annotate with type
     # BAKERT can we just make color_vars as we need them now they are not passed in to add_to_model
@@ -776,7 +700,7 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
                 color_vars[constraint] = {}
                 sources[constraint] = {}
             if color_combination not in color_vars[constraint]:
-                color_vars[constraint][color_combination] = model.new_has(constraint.turn, color_combination)
+                color_vars[constraint][color_combination] = model.new_sources(constraint.turn, color_combination)
                 sources[constraint][color_combination] = []
         # BAKERT now unused? untapped_sources[constraint] = []
 
@@ -834,21 +758,21 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     for constraint, contributions_by_color in sources.items():
         for color_combination, contribs in contributions_by_color.items():
             # BAKERT not a great name
-            # sources_of_this = model.new_int_var(0, MAX_DECK_SIZE, (constraint, color_combination, "sources"))
-            sources_of_this = model.new_sources(constraint.turn, color_combination)
+            # BAKERT this is where we add sources but we don't require anything of sources. instead we require of has. but we don't need has we can just require of sources.
+            sources_of_this = model.new_sources(constraint.turn, color_combination)  # BAKERT this overwrites an existing var and is pointless (in color_vars)
             model.add(sources_of_this == sum(contribs))  # BAKERT is there a better or more standard way of providing these vars that also do work?
             model.new_providing(constraint.turn, color_combination, contribs)  # BAKERT probably a better way to do this
             model.add(color_vars[constraint][color_combination] == sum(contribs))
 
-    min_lands = model.new_min_lands()  # BAKERT this is an ugly construction
+    min_lands = model.min_lands  # BAKERT this is an ugly construction
     model.add(min_lands == max(num_lands_required(constraint) for constraint in constraints))
-    total_lands = model.new_total_lands()
+    total_lands = model.total_lands
     model.add(total_lands == sum(model.lands.values()))
     model.add(total_lands >= min_lands)
 
     # BAKERT I think this is really broken if, say, our only 1-2 drops are Priest of Fell Rites and Tainted Indulgence
-    mana_spend = model.new_mana_spend()
-    max_mana_spend = model.new_max_mana_spend()
+    mana_spend = model.mana_spend
+    max_mana_spend = model.max_mana_spend
     max_mana_spend_per_turn, mana_spend_per_turn = [], []
     max_turn = max(constraint.turn for constraint in constraints) + 1
     for turn in range(1, max_turn):
@@ -872,7 +796,7 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     # BAKERT this should maybe be modeled as pain spent in first N turns rather than just how many painlands
     # BAKERT t1 combo don't care about pain, t20 control cares a lot, I think?
     # BAKERT should this be pushed into add_to_model? Should everything? Or rename it colored_sources?
-    pain = model.new_pain()
+    pain = model.pain
     model.add(pain == sum(model.lands[land] for land in model.lands if land.painful))
 
     # Give a little credit for extra sources. if you can double spell sometimes more your manabase is better
@@ -896,7 +820,7 @@ def define_model(constraints: frozenset[Constraint], lands: frozenset[Land]) -> 
     # pain = 0 to 24 (or calculate it differently)
     # BAKERT make vars for each part of the score and display them in solution
     # BAKERT type: ignore here is bad
-    objective = model.new_objective()
+    objective = model.objective
     # BAKERT normalize this over possible score
     # BAKERT max_objective = max_mana_spend + 0 - 0 + len(deck_colors) * 60
     model.add(objective == 1000 + mana_spend * 6 - total_lands * 10 - pain * 2 + total_colored_sources)
@@ -1162,6 +1086,7 @@ ConspiracyTheorist = card("1R")
 # BAKERT why does this add Restless Vents and not Vivid Crag?
 ooze_kiki = frozenset([ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo])
 
+
 # BAKERT make these "real" unit tests
 def test_remembering_model_collision() -> None:
     model = RememberingModel()
@@ -1255,7 +1180,6 @@ def test_solve() -> None:
     solution = solve(mono_w_bodyguards, frozenset({Plains, Island, MysticGate}))
     assert solution
     assert solution.status == cp_model.OPTIMAL
-    print(solution)
     assert solution.lands[Plains] == 14
     assert solution.lands.get(Island) is solution.lands.get(MysticGate) is None
 
@@ -1349,4 +1273,4 @@ def test() -> None:
 if len(sys.argv) >= 2 and (sys.argv[1] == "--test" or sys.argv[1] == "-t"):
     test()
 else:
-    print(solve(ooze_kiki))
+    print(solve(ooze))
