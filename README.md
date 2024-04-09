@@ -6,3 +6,5 @@ Magic the Gathering manabase solver
     $ pip install -r requirements.txt
     $ make all
     $ python manabase.py
+
+(c) 2024 Thomas David Baker <bakert@gmail.com>
