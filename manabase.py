@@ -18,10 +18,23 @@ class Weights:
     total_colored_sources: int
 
 
-# BAKERT mana_spend goes from triangle(fundamental_turn -1) to triangle(fundamental_turn) which is a pretty small range so give it a big weight
+# That sounds like a pretty good model but it means the constraints have to tell us all the costs, not just the constraining costs, but that's ok?
 # BAKERT mana_spend needs to take a deck's fundamental turn into account, i think. it can't be generated in isolation from that?
 # BAKERT it's insanely better to spend 1 than 0 in a one drops deck for example but that's only "1" different in this model
 # BAKERT even a four turn deck can only get 4 more mana with all untapped but i'd add a land to get 4 more untapped for sure
+# BAKERT mana_spend goes from triangle(fundamental_turn -1) to triangle(fundamental_turn) which is a pretty small range so give it a big weight
+# 420 points for true granularity
+# If we allocated 21 points:
+# 1 0 1 (2) 0,21
+# 2 1 3 (3) 0,11,21
+# 3 3 6 (4) 0,5,11,16,21
+# 4 6 10 (5) 0,4,8,13,17,21
+# 5 10 15 (6) 0,4,7,11,14,17,21
+# 6 15 21 (7) 0,3,6,9,12,15,18,21
+# But even this is not really sufficient because you don't care about t1 if you dont' have any one drops but our model is breaking its neck to give you t1
+# Maybe we just give you automatic point for each turn where you dont' have a constraint.turn?
+# So a deck with only one drops would care 0-21 for an untapped land on turn 1
+# But a deck with no ones or two could only care about enough untapped lands for t3
 WEIGHTS = Weights(mana_spend=6, total_lands=-10, pain=-2, total_colored_sources=0)
 
 
