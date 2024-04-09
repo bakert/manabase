@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from functools import total_ordering
 from typing import Iterable
@@ -7,27 +7,38 @@ from more_itertools import powerset
 from multiset import FrozenMultiset
 from ortools.sat.python import cp_model
 
-# BAKERT some kind of linter that warns about unused imports
 from remembering_model import RememberingModel
 
 MAX_DECK_SIZE = 100
 
-# BAKERT this should be an arg to solve or to Model or something, but available for non-Model also
-WEIGHTS = {
-    # BAKERT constants not bare strings pls
-    "mana_spend": 6,
-    "total_lands": -10,
-    "pain": -2,
-    "total_colored_sources": 0,
-}
+
+@dataclass
+class Weights:
+    mana_spend: int
+    total_lands: int
+    pain: int
+    total_colored_sources: int
 
 
-def score(values: dict[str, int]) -> int:
-    return sum(values[k] * WEIGHTS[k] for k in WEIGHTS)
+# BAKERT mana_spend goes from triangle(fundamental_turn -1) to triangle(fundamental_turn) which is a pretty small range so give it a big weight
+# BAKERT mana_spend needs to take a deck's fundamental turn into account, i think. it can't be generated in isolation from that?
+# BAKERT it's insanely better to spend 1 than 0 in a one drops deck for example but that's only "1" different in this model
+# BAKERT even a four turn deck can only get 4 more mana with all untapped but i'd add a land to get 4 more untapped for sure
+WEIGHTS = Weights(mana_spend=6, total_lands=-10, pain=-2, total_colored_sources=0)
+
+
+def score(values: dict[str, int], weights: Weights) -> int:
+    return sum(values[k.name] * getattr(weights, k.name) for k in fields(weights))
 
 
 class Aspect(Enum):
     UNTAPPED = "untapped"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __repr__(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True)
@@ -126,9 +137,10 @@ class Constraint:
     required: ManaCost
     turn: Turn = Turn(-1)
 
+    # Do we want R when we're already returning RR? Or should strict subsets be removed??
     # RRB => R, B, RR, RB, RRB
     # GGGG => G, GG, GGG, GGGG
-    # BAKERT move this to deck to avoid redudnacy or move a (turn, resource) version to deck
+    # BAKERT move this to deck to avoid redundancy or move a (turn, resource) version to deck
     def color_combinations(self) -> frozenset[ColorCombination]:
         return frozenset(ColorCombination(item) for item in powerset(self.required.colored_pips) if item)
 
@@ -165,10 +177,13 @@ ConstraintVars = dict[Constraint, ResourceVars]
 
 
 class Model(RememberingModel):
-    def __init__(self, deck: Deck, possible_lands: frozenset["Land"], debug: bool = False):
+    def __init__(self, deck: Deck, possible_lands: frozenset["Land"], weights: Weights, forced_lands: dict["Land", int] | None = None, debug: bool = False):
         super().__init__(debug)
         self.deck = deck
         self.lands = {land: self.new_int_var(0, land.max, (land,)) for land in possible_lands}
+        self.weights = weights
+        if not forced_lands:
+            forced_lands = {}
         self.min_lands = self.new_int_var(0, self.deck.size, ("min_lands",))
         self.mana_spend = self.new_int_var(0, self.deck.fundamental_turn.max_mana_spend, ("mana_spend",))
         self.total_lands = self.new_int_var(0, self.deck.size, ("total_lands",))
@@ -178,6 +193,11 @@ class Model(RememberingModel):
         self.required: dict[tuple[Turn, Resource], cp_model.IntVar] = {}
         self.sources: dict[tuple[Turn, Resource], cp_model.IntVar] = {}
         self.providing: dict[tuple[Turn, Resource], list[IntVar]] = {}
+        # forced_lands is so much like "at least 4 shelldock isle" but just slightly different because of the total_lands ==
+        for land, n in forced_lands.items():
+            self.add(self.lands[land] == n)
+        if forced_lands:
+            self.add(self.total_lands == sum(forced_lands.values()))
 
     def new_required(self, turn: Turn, resource: Resource) -> cp_model.IntVar:
         self.required[(turn, resource)] = self.new_int_var(0, self.deck.size, (turn, resource, "required"))
@@ -191,8 +211,8 @@ class Model(RememberingModel):
     def new_providing(self, turn: Turn, resource: Resource, sources: list[IntVar]) -> None:
         self.providing[(turn, resource)] = sources
 
-    def objective_function(self, weights: dict[str, int]) -> cp_model.LinearExprT:
-        return sum(getattr(self, var) * weight for var, weight in weights.items())
+    def objective_function(self) -> cp_model.LinearExprT:
+        return sum(getattr(self, k.name) * getattr(self.weights, k.name) for k in fields(self.weights))
 
 
 @dataclass(eq=True, frozen=True, order=True)
@@ -474,6 +494,7 @@ class Pain(Land):
 
 
 # BAKERT complicated to explain this only makes U for instants on t1, and it only makes B on your own turn, and only if you have another land! For now, it's an Underground Sea
+# BAKERT we must at least explain that it's worse than an Island in a non-B deck and worse than a Swamp in a non-U deck somehow
 @dataclass(eq=True, frozen=True, repr=False)
 class RiverOfTearsLand(Land):
     def untapped_rules(self, model: Model, turn: Turn) -> IntVar:
@@ -627,6 +648,7 @@ class IntValueException(Exception):
     pass
 
 
+@total_ordering
 class Solution:  # BAKERT it would be nice to put the amount each thing is contributing to scorealongside the thing Total lands: 23 (-230) or even normalized for that one aspect … Total lands: 23 (1.0)
     def __init__(self, status: int, model: Model, solver: cp_model.CpSolver) -> None:
         self.status = status
@@ -650,13 +672,29 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
                 if not isinstance(var, cp_model.IntVar):
                     raise IntValueException("Solution doesn't currently handle non-zero ints as var values. Can you provide an IntVar instead?")
                 self.providing[k][var] = value
-        worst_score = score({"mana_spend": 0, "total_lands": self.model.deck.size, "pain": self.model.deck.size, "total_colored_sources": 0})
-        best_score = score({"mana_spend": self.model.deck.fundamental_turn.max_mana_spend, "total_lands": self.min_lands, "pain": 0, "total_colored_sources": len(self.model.deck.colors) * self.min_lands})
+        # BAKERT a mana_spend of 0 is not actually possible but maybe that's not super important
+        worst_score = score({"mana_spend": 0, "total_lands": self.model.deck.size, "pain": self.model.deck.size, "total_colored_sources": 0}, model.weights)
+        best_score = score({"mana_spend": self.model.deck.fundamental_turn.max_mana_spend, "total_lands": self.min_lands, "pain": 0, "total_colored_sources": len(self.model.deck.colors) * self.min_lands}, model.weights)
         self.normalized_score = (self.objective - worst_score) / (best_score - worst_score)
 
     @property
     def total_lands(self) -> int:
         return sum(self.lands.values())
+
+    def scores(self) -> dict[str, int]:
+        # BAKERT could make an object not a dict. in a way scores and weights are the same thing???
+        return {k.name: getattr(self, k.name) for k in fields(self.model.weights)}
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Solution):
+            return NotImplemented
+        # BAKERT there's a lot going on here this is wrong, they aren't the same, are they?
+        return self.normalized_score == other.normalized_score
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Solution):
+            return NotImplemented
+        return self.normalized_score < other.normalized_score
 
     def __repr__(self) -> str:
         optimality = "not " if self.status != cp_model.OPTIMAL else ""
@@ -700,11 +738,13 @@ def card(spec: str, turn: int | None = None) -> Constraint:
 
 
 # BAKERT need some way to say "the manabase must include 4 Shelldock Isle"
-def solve(deck: Deck, lands: frozenset[Land] | None = None) -> Solution | None:
+def solve(deck: Deck, weights: Weights, lands: frozenset[Land] | None = None, forced_lands: dict[Land, int] | None = None) -> Solution | None:
     # BAKERT T2 RR completely counterfeits T2 R so there's no point in frank returning R=13, but you still need R in BR or BBR
+    if not forced_lands:
+        forced_lands = {}
     if not lands:
         lands = all_lands
-    model = define_model(deck, lands)
+    model = define_model(deck, weights, lands, forced_lands)  # BAKERT make forced_lands optional?
     solver = cp_model.CpSolver()
     status = solver.solve(model.model)  # BAKERT would be nice to not stutter here
     if status != cp_model.OPTIMAL and status != cp_model.FEASIBLE:
@@ -713,9 +753,9 @@ def solve(deck: Deck, lands: frozenset[Land] | None = None) -> Solution | None:
 
 
 # BAKERT this function is too large, break it up
-def define_model(deck: Deck, lands: frozenset[Land]) -> Model:
+def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_lands: dict[Land, int]) -> Model:
     possible_lands = viable_lands(deck.colors, lands)
-    model = Model(deck, possible_lands)
+    model = Model(deck, possible_lands, weights, forced_lands)
 
     # BAKERT add_to_model is not the right name unless we generalize it
     # BAKERT treating each constraint as independent isn't quite right. If you sac a land for RR to play something you can't sac it for UU to play something else, so it's not totally independent
@@ -814,17 +854,10 @@ def define_model(deck: Deck, lands: frozenset[Land]) -> Model:
     model.add(total_colored_sources == sum(all_colored_sources))
 
     # BAKERT if a deck is playing 5+ drops it cares less about fitting in 24 lands than a deck curving out to 4
-    # mana_spend = 0 to 15(ish)
-    # lands = 14 to 24(ish)
-    # colored_sources = 14 to 120ish
-    # pain = 0 to 24 (or calculate it differently)
-    # BAKERT type: ignore here is bad
-    # BAKERT programmatically structure the objective function so we can tweak it in one place and it affects Solution and Model and we can pass a list of lands to objective function for a score so we can set up some tests to say {A} is better than {B}
     # BAKERT total_colored_sources is too powerful in this equation so we need to tweak but let's save tweaking until we have done the above
     # BAKERT it's weird that we're using model.total_lands here (and model.min_lands above) but we're using local vars for the others
-    # BAKERT scores is a bad name
     # BAKERT relying on the model having vars with the same names as the weights feels a little fragile. Can we make it more related?
-    model.maximize(model.objective_function(WEIGHTS))  # type: ignore
+    model.maximize(model.objective_function())
 
     return model
 
@@ -1097,4 +1130,4 @@ ooze_kiki = frozenset([ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, P
 
 # BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
 
-print(solve(Deck(ooze, 60)))
+print(solve(Deck(azorius_taxes, 60), WEIGHTS))
