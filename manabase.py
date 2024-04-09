@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import total_ordering
-from typing import Iterable, Literal
+from typing import Iterable
 
 from more_itertools import powerset
 from multiset import FrozenMultiset

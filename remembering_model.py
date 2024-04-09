@@ -1,5 +1,5 @@
-from typing import Hashable
 import sys
+from typing import Hashable
 
 from ortools.sat.python import cp_model
 

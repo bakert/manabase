@@ -1,7 +1,7 @@
 import pytest
+from ortools.sat.python import cp_model
 
-# BAKERT I don't like import * but anything else is definitely painful at this point
-from manabase import *
+from manabase import AdarkarWastes, B, BattlefieldForge, Card, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RememberingModel, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, U, VineglimmerSnarl, W, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, solve, viable_lands
 from remembering_model import KeyCollision
 
 
@@ -78,10 +78,9 @@ def test_tango() -> None:
 def test_add_to_model() -> None:
     constraint = card("WU")
     model = Model(Deck(frozenset([constraint]), 60), all_lands)
-    plains, island, mystic_gate = model.lands[Plains], model.lands[Island], model.lands[MysticGate]
     contributions = MysticGate.add_to_model(model, constraint)
-    assert contributions[ColorCombination([W])] == mystic_gate
-    assert contributions[ColorCombination([U])] == mystic_gate
+    assert contributions[ColorCombination([W])] == model.lands[MysticGate]
+    assert contributions[ColorCombination([U])] == model.lands[MysticGate]
     multicolor_contribs_s = str(contributions[ColorCombination([W, U])])
     assert "Mystic" in multicolor_contribs_s
     assert "Sunken" not in multicolor_contribs_s
