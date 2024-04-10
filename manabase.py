@@ -718,6 +718,15 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
             return NotImplemented
         return self.normalized_score < other.normalized_score
 
+    # BAKERT entirely aside from whether we need to calculate it or not, if a constraint line is entirely counterfeited by another, elide it
+    # 1    Constraint T5 2RRR
+    # 2    T5 R required=9 sources=15 providing=4 Mountain, 3 Battlefield Forge, 4 Cascade Bluffs, 4 Shivan Reef
+    # 3    T5 RR required=15 sources=19 providing=4 Mountain, 3 Battlefield Forge, 8 Cascade Bluffs T5 2RRR RR, 4 Shivan Reef
+    # 4    T5 RRR required=19 sources=19 providing=4 Mountain, 3 Battlefield Forge, 8 Cascade Bluffs T5 2RRR RR, 4 Shivan Reef
+    # 5    T5 untapped required=24 sources=24 providing=4 Mountain, 2 Island, 4 Plains, 3 Battlefield Forge, 4 Cascade Bluffs T5, 4 Shivan Reef, 3 Mystic Gate T5
+    # -- Lines 3 here is entirely counterfeited by Line 2 and can be omitted?
+    # -- Sources should know what land is their source even if they're new vars?
+
     def __repr__(self) -> str:
         optimality = "not " if self.status != cp_model.OPTIMAL else ""
         s = f"Solution ({optimality}optimal)\n\n"
@@ -1165,4 +1174,4 @@ ooze_kiki = make_deck(ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, Pr
 
 # BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
 
-print(solve(azorius_taxes, WEIGHTS))
+print(solve(jeskai_twin, WEIGHTS))
