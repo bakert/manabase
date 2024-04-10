@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from functools import total_ordering
-from typing import Iterable, override
+from typing import Any, Iterable, overload, override
 
 from more_itertools import powerset
 from multiset import FrozenMultiset
@@ -12,32 +12,22 @@ from remembering_model import RememberingModel
 
 @dataclass
 class Weights:
-    mana_spend: int
+    # A score from 0-21 for how much untapped mana the deck has available on the turns it cares about. 21 = always untapped lands, 0 = always tapped lands
+    normalized_mana_spend: int
+    # How many lands the deck plays BAKERT could be number above min lands instead?
     total_lands: int
+    # How many lands the deck plays that require a life payment to make a color. BAKERT this could be modelled way better.
     pain: int
+    # Num lands x num colors made by those lands. BAKERT is this a measure of anything we care about?
     total_colored_sources: int
 
 
-# That sounds like a pretty good model but it means the constraints have to tell us all the costs, not just the constraining costs, but that's ok?
-# BAKERT mana_spend needs to take a deck's fundamental turn into account, i think. it can't be generated in isolation from that?
-# BAKERT it's insanely better to spend 1 than 0 in a one drops deck for example but that's only "1" different in this model
-# BAKERT even a four turn deck can only get 4 more mana with all untapped but i'd add a land to get 4 more untapped for sure
-# BAKERT mana_spend goes from triangle(fundamental_turn -1) to triangle(fundamental_turn) which is a pretty small range so give it a big weight
-# 420 points for true granularity
-# If we allocated 21 points:
-# 1 0 1 (2) 0,21
-# 2 1 3 (3) 0,11,21
-# 3 3 6 (4) 0,5,11,16,21
-# 4 6 10 (5) 0,4,8,13,17,21
-# 5 10 15 (6) 0,4,7,11,14,17,21
-# 6 15 21 (7) 0,3,6,9,12,15,18,21
-# But even this is not really sufficient because you don't care about t1 if you dont' have any one drops but our model is breaking its neck to give you t1
-# Maybe we just give you automatic point for each turn where you dont' have a constraint.turn?
-# So a deck with only one drops would care 0-21 for an untapped land on turn 1
-# But a deck with no ones or two could only care about enough untapped lands for t3
-WEIGHTS = Weights(mana_spend=6, total_lands=-10, pain=-2, total_colored_sources=0)
+WEIGHTS = Weights(normalized_mana_spend=1, total_lands=-10, pain=-2, total_colored_sources=0)
+
+# BAKERT can we avoid the whole normalized_mana_spend thing by just putting the number we actually want in the modle in the first place somehow?
 
 
+# BAKERT this is just floating aroudn
 def score(values: dict[str, int], weights: Weights) -> int:
     return sum(values[k.name] * getattr(weights, k.name) for k in fields(weights))
 
@@ -132,9 +122,13 @@ class ManaCost:
 
 class Turn(int):
     @property
+    def min_mana_spend(self) -> int:
+        return triangle(self - 1)
+
+    @property
     def max_mana_spend(self) -> int:
         # This is Ancient Tomb erasure, but the maximum amount of mana you could have spent by the end of this turn
-        return self * (self + 1) // 2  # 1 + 2 + 3 …
+        return triangle(self)
 
     def __str__(self) -> str:
         return self.__repr__()
@@ -187,6 +181,37 @@ ResourceVars = dict[Resource, list[IntVar]]
 ConstraintVars = dict[Constraint, ResourceVars]
 
 
+# BAKERT this belongs somewhere, presumably. On Turn??
+def triangle(n: int) -> int:
+    return n * (n + 1) // 2  # 1 + 2 + 3 …
+
+
+@overload
+def normalized_mana_spend(turn: Turn, mana_spend: int) -> int: ...
+
+
+@overload
+def normalized_mana_spend(turn: Turn, mana_spend: cp_model.IntVar) -> cp_model.LinearExprT: ...
+
+
+# BAKERT
+# Even this is not really sufficient because you don't care about t1 if you don't have any one drops but our model is breaking its neck to give you t1
+# Maybe we just give you automatic point for each turn where you don't have a constraint.turn?
+# So a deck with only one drops would care 0-21 for an untapped land on turn 1
+# But a deck with no ones or two could only care about enough untapped lands for t3
+def normalized_mana_spend(turn: Turn, mana_spend: IntVar) -> Any:  # BAKERT type
+    if turn > 6:  # BAKERT magic six
+        raise Exception("BAKERT")
+    # BAKERT I'd like to do bounds checking on mana_spend but if it's an IntVar that isn't possible(??)
+    min_mana_spend = triangle(turn - 1)
+    max_mana_spend = triangle(turn)
+    width = max_mana_spend - min_mana_spend
+    points_per_mana_above_min = triangle(6) // width  # BAKERT what effect does this have?
+    mana_spend_above_min = mana_spend - min_mana_spend
+    print(mana_spend_above_min, points_per_mana_above_min)
+    return mana_spend_above_min * points_per_mana_above_min
+
+
 class Model(RememberingModel):
     def __init__(self, deck: Deck, possible_lands: frozenset["Land"], weights: Weights, forced_lands: dict["Land", int] | None = None, debug: bool = False):
         super().__init__(debug)
@@ -197,6 +222,7 @@ class Model(RememberingModel):
             forced_lands = {}
         self.min_lands = self.new_int_var(0, self.deck.size, ("min_lands",))
         self.mana_spend = self.new_int_var(0, self.deck.fundamental_turn.max_mana_spend, ("mana_spend",))
+        self.normalized_mana_spend = self.new_int_var(0, triangle(Turn(6)), ("normalized_mana_spend",))  # BAKERT another magic number 6
         self.total_lands = self.new_int_var(0, self.deck.size, ("total_lands",))
         self.pain = self.new_int_var(0, self.deck.size, ("pain",))
         self.total_colored_sources = self.new_int_var(0, self.deck.size * len(self.deck.colors), ("total_colored_sources",))
@@ -679,6 +705,7 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
         self.lands = {land: self.solver.Value(var) for land, var in self.model.lands.items() if self.solver.Value(var) > 0}
         self.min_lands = self.solver.Value(self.model.min_lands)
         self.mana_spend = self.solver.Value(self.model.mana_spend)
+        self.normalized_mana_spend = self.solver.Value(self.model.normalized_mana_spend)
         self.pain = self.solver.Value(self.model.pain)
         self.total_colored_sources = self.solver.Value(self.model.total_colored_sources)
         self.objective = int(self.solver.ObjectiveValue())
@@ -695,8 +722,11 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
                     raise IntValueException("Solution doesn't currently handle non-zero ints as var values. Can you provide an IntVar instead?")
                 self.providing[k][var] = value
         # BAKERT a mana_spend of 0 is not actually possible but maybe that's not super important
-        worst_score = score({"mana_spend": 0, "total_lands": self.model.deck.size, "pain": self.model.deck.size, "total_colored_sources": 0}, model.weights)
-        best_score = score({"mana_spend": self.model.deck.fundamental_turn.max_mana_spend, "total_lands": self.min_lands, "pain": 0, "total_colored_sources": len(self.model.deck.colors) * self.min_lands}, model.weights)
+        # BAKERT worst_score here should try to be "worst score that would pass as a solution" not "worst possible score", i think? Does it matter? Clusters all the decks in 0.9x range?
+        # BAKERT it would be really good to make the worst total_lands a lot lower but how would we do that? some deck might really wanna play max lands? one drops in every color with only basics avialable or whatever. maybe we can use "if you solved thie problem with just basics"? that's a whole other solve but presumably a quick one1
+        worst_score = score({"normalized_mana_spend": 0, "total_lands": self.model.deck.size, "pain": self.model.deck.size, "total_colored_sources": 0}, model.weights)
+        # BAKERT put the normalizing stuff on Turn, probably, to avoid this monstrosity
+        best_score = score({"normalized_mana_spend": normalized_mana_spend(self.model.deck.fundamental_turn, self.model.deck.fundamental_turn.max_mana_spend), "total_lands": self.min_lands, "pain": 0, "total_colored_sources": len(self.model.deck.colors) * self.min_lands}, model.weights)
         self.normalized_score = (self.objective - worst_score) / (best_score - worst_score)
 
     @property
@@ -731,7 +761,7 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
         optimality = "not " if self.status != cp_model.OPTIMAL else ""
         s = f"Solution ({optimality}optimal)\n\n"
         s += f"{self.total_lands} Lands (min {self.min_lands})\n\n"
-        s += f"Mana spend: {self.mana_spend}/{self.model.deck.fundamental_turn.max_mana_spend}\n"
+        s += f"Mana spend: {self.mana_spend}/{self.model.deck.fundamental_turn.max_mana_spend} ({self.normalized_mana_spend}/21)\n"  # BAKERT magic number 21 (triangle(Turn(6))
         s += f"Pain: {self.pain}\n"
         s += f"Colored sources: {self.total_colored_sources}\n"
         s += "\n"
@@ -743,9 +773,9 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
             resources = sorted(constraint.color_combinations()) + [Aspect.UNTAPPED]
             for resource in resources:
                 s += f"{constraint.turn} {resource} "
-                s += f"required={self.required[(constraint.turn, resource)]} "
-                s += f"sources={self.sources[(constraint.turn, resource)]} "
-                s += "providing=" + ", ".join(f"{value} {var.name}" for var, value in self.providing[(constraint.turn, resource)].items()) + "\n"
+                s += f"required={self.required.get((constraint.turn, resource), 0)} "
+                s += f"sources={self.sources.get((constraint.turn, resource), 0)} "
+                s += "providing=" + ", ".join(f"{value} {var.name}" for var, value in self.providing.get((constraint.turn, resource), {}).items()) + "\n"
             s += "\n"
         s += f"Score: {round(self.normalized_score, 2)} ({self.objective})\n"
         return s
@@ -825,7 +855,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
             model.add(r == required)
             model.add(sum(sources[constraint][color_combination]) >= required)
 
-        if required_untapped:
+        if required_untapped:  # BAKERT maybe we want to store all the lands that will be untapped this turn under sources even though we don't need any, and add a providing too
             # BAKERT this whole section isn't really how we do things now, push the color checking/generic part into the Land classes?
             generic_ok = len(constraint.required.pips) > len(constraint.required.colored_pips)
             admissible_untapped = {}
@@ -855,7 +885,6 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
     model.add(model.total_lands == sum(model.lands.values()))
     model.add(model.total_lands >= model.min_lands)
 
-    # BAKERT I think this is really broken if, say, our only 1-2 drops are Priest of Fell Rites and Tainted Indulgence
     mana_spend = model.mana_spend
     max_mana_spend_per_turn, mana_spend_per_turn = [], []
     fundamental_turn = max(constraint.turn for constraint in deck.constraints)
@@ -876,6 +905,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
         model.add(mana_spend_this_turn == turn - 1).OnlyEnforceIf(enough_untapped.Not())
         mana_spend_per_turn.append(mana_spend_this_turn)
     model.add(mana_spend == sum(mana_spend_per_turn))
+    model.add(model.normalized_mana_spend == normalized_mana_spend(Turn(fundamental_turn), mana_spend))
 
     # BAKERT this should maybe be modeled as pain spent in first N turns rather than just how many painlands
     # BAKERT t1 combo don't care about pain, t20 control cares a lot, I think?
@@ -927,7 +957,7 @@ def need_untapped(turn: Turn) -> int:
         return frank(Constraint(ManaCost(C), turn))[ColorCombination({C})]
     except UnsatisfiableConstraint:
         # We don't know how many untapped lands you need beyond turn 6 so supply an overestimate
-        return frank(Constraint(ManaCost(C), Turn(6)))[ColorCombination({C})]
+        return frank(Constraint(ManaCost(C), Turn(6)))[ColorCombination({C})]  # BAKERT 6 is a magic number here and shared with normalize_mana_spend
 
 
 class UnsatisfiableConstraint(Exception):
@@ -1023,6 +1053,7 @@ mono_w_bodyguards = make_deck(BenevolentBodyguard)
 white_weenie = make_deck(BenevolentBodyguard, SamuraiOfThePaleCurtain)
 meddlers = make_deck(MeddlingMage)
 
+# BAKERT frank currently says UnsatisfiableConstraint to manacosts with 5+ colors
 InvasionOfAlara = Constraint(ManaCost(W, U, B, R, G), Turn(5))
 invasion_of_alara = make_deck(InvasionOfAlara)
 
@@ -1143,6 +1174,10 @@ KarmicGuide = card("3WW")
 ConspiracyTheorist = card("1R")
 ooze_kiki = make_deck(ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo)
 
+OustOnTwo = card("W", 2)
+TheRavensWarning = card("1UW")
+ravens_warning = make_deck(MemoryLapse, OustOnTwo, CouncilsJudgment, Forbid, TheRavensWarning, WrathOfGod)
+
 # BAKERT you should never choose Crumbling Necropolis over a check or a snarl in UR (or UB or RB) if you have even one land with the right basic types
 # BAKERT in general you should be able to get partial credit for a check or a snarl even if not hitting the numbers
 
@@ -1174,4 +1209,6 @@ ooze_kiki = make_deck(ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, Pr
 
 # BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
 
-print(solve(jeskai_twin, WEIGHTS))
+# BAKERT why is T3 untapped required and T4 untapped required both 24? surely it should change as mana cost changes?
+
+print(solve(ooze, WEIGHTS))
