@@ -1,21 +1,11 @@
-import pytest
 from ortools.sat.python import cp_model
 
-from manabase import WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RememberingModel, RestlessVents, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, ooze, ooze_kiki, solve, viable_lands
-from remembering_model import KeyCollision
+from manabase import WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RestlessVents, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, ooze, ooze_kiki, solve, viable_lands
 
 
 def test_deck() -> None:
     constraints = frozenset([card("W"), card("RB"), card("WR"), card("5G")])
     assert Deck(constraints, 60).colors == frozenset({W, R, B, G})
-
-
-def test_remembering_model_collision() -> None:
-    model = RememberingModel()
-    model.new_int_var(0, 1, ("test",))
-    model.new_int_var(0, 1, ("test", "other"))
-    with pytest.raises(KeyCollision):
-        model.new_int_var(0, 2, ("test",))
 
 
 def test_viable_lands() -> None:
