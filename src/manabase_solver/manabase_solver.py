@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from functools import total_ordering
-from typing import Any, Iterable, overload, override
+from typing import Any, Iterable, overload
 
 from more_itertools import powerset
 from multiset import FrozenMultiset
@@ -355,7 +355,6 @@ Manabase = dict[Land, int]
 
 @dataclass(eq=True, frozen=True, repr=False)
 class Nonbasic(Land):
-    @override
     @property
     def max(self) -> int:
         return 4

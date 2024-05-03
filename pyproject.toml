@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manabase-solver"
-version = "0.1"
+version = "0.1.2"
 authors = [
     {name = "Thomas David Baker", email = "bakert@gmail.com"},
 ]
 description = "Magic: the Gathering manabase solver"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 keywords = ["magic", "mtg", "manabase", "solver"]
 classifiers = [
@@ -19,6 +19,8 @@ classifiers = [
     "Topic :: Games/Entertainment",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.10",
 ]
 dynamic = ["dependencies"]
 

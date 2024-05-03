@@ -18,7 +18,7 @@ Magic the Gathering manabase solver
 
     $ git clone https://github.com/bakert/manabase-solver
     $ cd manabase-solver
-    $ python3.12 -m venv .
+    $ python3.10 -m venv .
     $ source bin/activate
     $ pip install -r requirements.txt
     $ source bin/activate
