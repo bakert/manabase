@@ -27,4 +27,16 @@ Magic the Gathering manabase solver
     $ source bin/activate
     $ make all
 
+## Build
+
+    $ python -m build
+
+## Publish
+
+    $ vi pyproject.toml  # Bump version number
+    $ git add -p
+    $ git commit -m "Bump version number to vX.X"
+    $ git tag -a "vX.X" -m "manabase vX.X"
+    $ twine upload dist/*
+
 (c) 2024 Thomas David Baker <bakert@gmail.com>
