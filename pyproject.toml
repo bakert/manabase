@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manabase"
+version = "0.1"
+authors = [
+    {name = "Thomas David Baker", email = "bakert@gmail.com"},
+]
+description = "Magic: the Gathering manabase solver"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+keywords = ["magic", "mtg", "manabase"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Games/Entertainment",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+]
+[project.urls]
+Homepage = "https://github.com/bakert/manabase"
+Repository = "https://github.com/bakert/manabase"
+Issues = "https://github.com/bakert/manabase/issues"
