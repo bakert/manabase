@@ -11,3 +11,7 @@ pyvenv.cfg
 
 # pytest
 __pycache__/
+
+# build
+dist/
+*.egg-info/

@@ -1,6 +1,6 @@
 import pytest
 
-from remembering_model import KeyCollision, RememberingModel
+from .remembering_model import KeyCollision, RememberingModel
 
 
 def test_remembering_model_collision() -> None:

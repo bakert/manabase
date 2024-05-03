@@ -7,7 +7,7 @@ from more_itertools import powerset
 from multiset import FrozenMultiset
 from ortools.sat.python import cp_model
 
-from remembering_model import RememberingModel
+from .remembering_model import RememberingModel
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Weights:
     total_colored_sources: int
 
 
-WEIGHTS = Weights(normalized_mana_spend=5, total_lands=-10, pain=-1, total_colored_sources=0)
+DEFAULT_WEIGHTS = Weights(normalized_mana_spend=5, total_lands=-10, pain=-1, total_colored_sources=0)
 
 # BAKERT can we avoid the whole normalized_mana_spend thing by just putting the number we actually want in the module in the first place somehow?
 

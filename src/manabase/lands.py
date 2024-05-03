@@ -1,4 +1,4 @@
-from manabase import Basic, Check, W, U, B, R, G, C, Snarl, Filter, Bicycle, Tapland, Pain, Tango, RiverOfTearsLand
+from .manabase import Basic, Check, W, U, B, R, G, C, Snarl, Filter, Bicycle, Tapland, Pain, Tango, RiverOfTearsLand
 
 Wastes = Basic("Wastes", None, "Basic Land", (C,))
 Plains = Basic("Plains", None, "Basic Land - Plains", (W,))
@@ -130,4 +130,4 @@ RiverOfTears = RiverOfTearsLand("River of Tears", None, "Land", (U, B))
 
 # BAKERT Tendo Ice Bridge and Crumbling Vestige
 
-all_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))
+penny_dreadful_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))

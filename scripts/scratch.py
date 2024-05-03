@@ -1,5 +1,6 @@
-from lands import all_lands
-from manabase import Constraint, ManaCost, U, W, Turn, R, card, Deck, make_deck, solve, WEIGHTS, B, G
+from manabase import Constraint, ManaCost, U, W, Turn, R, card, Deck, make_deck, solve, DEFAULT_WEIGHTS, B, G, penny_dreadful_lands
+
+# To use these scraps from the commandline install the library, maybe with `pip install -e .`
 
 DeputyOfDetention = Constraint(ManaCost(1, U, W), Turn(3))
 
@@ -188,4 +189,4 @@ datro_orzhov = make_deck(card("1B"), card("1W"), card("2WW"))
 
 game_objects = make_deck(card("UG"), card("2UB"), card("WG"))
 
-print(solve(game_objects, WEIGHTS, all_lands))
+print(solve(game_objects, DEFAULT_WEIGHTS, penny_dreadful_lands))

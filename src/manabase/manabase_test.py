@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-from manabase import WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, Turn, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, normalized_mana_spend, ooze, ooze_kiki, solve, viable_lands
+from manabase import DEFAULT_WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, Turn, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, normalized_mana_spend, ooze, ooze_kiki, solve, viable_lands
 
 
 def test_normalized_mana_spend() -> None:
@@ -73,7 +73,7 @@ def test_filter() -> None:
 
 def test_tango() -> None:
     constraint = card("U")
-    model = Model(Deck(frozenset([constraint]), 60), all_lands, WEIGHTS)
+    model = Model(Deck(frozenset([constraint]), 60), all_lands, DEFAULT_WEIGHTS)
     contributions = PrairieStream.add_to_model(model, constraint)
     assert contributions[ColorCombination({U})] == 0
     constraint = card("2U")
@@ -83,7 +83,7 @@ def test_tango() -> None:
 
 def test_add_to_model() -> None:
     constraint = card("WU")
-    model = Model(Deck(frozenset([constraint]), 60), all_lands, WEIGHTS)
+    model = Model(Deck(frozenset([constraint]), 60), all_lands, DEFAULT_WEIGHTS)
     contributions = MysticGate.add_to_model(model, constraint)
     assert contributions[ColorCombination([W])] == model.lands[MysticGate]
     assert contributions[ColorCombination([U])] == model.lands[MysticGate]
@@ -100,14 +100,14 @@ def test_sort_lands() -> None:
 
 
 def test_solve() -> None:
-    solution = solve(mono_w_bodyguards, WEIGHTS, lands=frozenset({Plains, Island, MysticGate}))
+    solution = solve(mono_w_bodyguards, DEFAULT_WEIGHTS, lands=frozenset({Plains, Island, MysticGate}))
     print(mono_w_bodyguards)
     assert solution
     assert solution.status == cp_model.OPTIMAL
     assert solution.lands[Plains] == 14
     assert solution.lands.get(Island) is solution.lands.get(MysticGate) is None
 
-    solution = solve(azorius_taxes, WEIGHTS)
+    solution = solve(azorius_taxes, DEFAULT_WEIGHTS)
     assert solution
     assert solution.status == cp_model.OPTIMAL
     print(solution)
@@ -117,29 +117,29 @@ def test_solve() -> None:
     # BAKERT when we're more sure about what we want here, assert more. In particular 4 Mystic Gate?
 
     boros_burn = Deck(frozenset([card("W"), card("R"), card("WR")]), 60)
-    solution = solve(boros_burn, WEIGHTS)
+    solution = solve(boros_burn, DEFAULT_WEIGHTS)
     assert solution
     assert solution.status == cp_model.OPTIMAL
     assert solution.lands[BattlefieldForge] == 4
 
     counter_weenie = Deck(frozenset([card("WW"), card("UU")]), 60)
-    solution = solve(counter_weenie, WEIGHTS)
+    solution = solve(counter_weenie, DEFAULT_WEIGHTS)
     assert solution
     assert solution.status == cp_model.OPTIMAL
     assert solution.lands[MysticGate] == 4
 
     basics_and_tango = frozenset({Plains, Island, PrairieStream})
     light = Deck(frozenset({card("1W"), card("1U")}), 60)
-    solution = solve(light, WEIGHTS, lands=basics_and_tango)
+    solution = solve(light, DEFAULT_WEIGHTS, lands=basics_and_tango)
     assert solution
     assert solution.lands[PrairieStream] == 4
     intense = Deck(frozenset({card("W"), card("U")}), 60)
-    solution = solve(intense, WEIGHTS, lands=basics_and_tango)
+    solution = solve(intense, DEFAULT_WEIGHTS, lands=basics_and_tango)
     assert solution
     assert not solution.lands.get(PrairieStream)
 
     necrotic_ooze = Deck(frozenset([card("B", 2), card("UB"), card("WB"), card("2B"), card("3U"), card("2BB")]), 60)
-    solution = solve(necrotic_ooze, WEIGHTS)
+    solution = solve(necrotic_ooze, DEFAULT_WEIGHTS)
     assert solution
     assert solution.status == cp_model.OPTIMAL
     assert MysticGate not in solution.lands
@@ -148,7 +148,7 @@ def test_solve() -> None:
     assert solution.lands.get(RiverOfTears, 0) == 4
 
     # BAKERT we can enable this test when colored sources works which will allow the model to pick Vivid Crag over RestlessVents here
-    solution = solve(ooze_kiki, WEIGHTS)
+    solution = solve(ooze_kiki, DEFAULT_WEIGHTS)
     assert solution  # BAKERT maybe it's better if solve always returns an object and sometimes it's a solution that says "nope" instead of None?
     # BAKERT this test is flakey
     # assert RestlessVents not in solution.lands if solution.lands.get(VividCrag, 0) < 4 else True
@@ -169,8 +169,8 @@ def test_score() -> None:
     deck = mono_w_bodyguards
     min_plains: Manabase = {Plains: 14}
     excess_plains: Manabase = {Plains: 18}
-    good_solution = solve(deck, WEIGHTS, forced_lands=min_plains)
-    bad_solution = solve(deck, WEIGHTS, forced_lands=excess_plains)
+    good_solution = solve(deck, DEFAULT_WEIGHTS, forced_lands=min_plains)
+    bad_solution = solve(deck, DEFAULT_WEIGHTS, forced_lands=excess_plains)
     assert good_solution and bad_solution and good_solution > bad_solution
 
     # BAKERT more these definitions into the tests and don't share them with "scratch" so the tests are stable
@@ -195,9 +195,9 @@ def test_score() -> None:
         RiverOfTears: 4,
         Swamp: 6,
     }
-    untapped_solution = solve(deck, WEIGHTS, forced_lands=good_lands)
+    untapped_solution = solve(deck, DEFAULT_WEIGHTS, forced_lands=good_lands)
     assert untapped_solution
-    tapped_solution = solve(deck, WEIGHTS, forced_lands=bad_lands)
+    tapped_solution = solve(deck, DEFAULT_WEIGHTS, forced_lands=bad_lands)
     assert tapped_solution
     assert untapped_solution.normalized_score > tapped_solution.normalized_score
 
@@ -214,7 +214,7 @@ def test_mana_spend() -> None:
         RiverOfTears: 4,
         Swamp: 6,
     }
-    solution = solve(deck, WEIGHTS, all_lands, bad_lands)
+    solution = solve(deck, DEFAULT_WEIGHTS, all_lands, bad_lands)
     assert solution
     assert solution.mana_spend == 6  # BAKERT but maybe it should be "1" or even something normalized over fundamental turn max mana spend?
 
