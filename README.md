@@ -1,10 +1,10 @@
-# manabase
+# manabase-solver
 
 Magic the Gathering manabase solver
 
 ## Usage
 
-    from manabase import card, DEFAULT_WEIGHTS, make_deck, penny_dreadful_lands, solve
+    from manabase_solver import card, DEFAULT_WEIGHTS, make_deck, penny_dreadful_lands, solve
 
     Pestermite = card("2U")
     RestorationAngel = card("3W")
@@ -16,13 +16,14 @@ Magic the Gathering manabase solver
 
 ## Development
 
-    $ git clone https://github.com/bakert/manabase
-    $ cd manabase
+    $ git clone https://github.com/bakert/manabase-solver
+    $ cd manabase-solver
     $ python3.12 -m venv .
     $ source bin/activate
     $ pip install -r requirements.txt
     $ source bin/activate
-    $ python manabase.py
+    $ pip install -e .
+    $ python scripts/scratch.py
     $ pip install -r requirements-dev.txt
     $ source bin/activate
     $ make all
@@ -36,7 +37,9 @@ Magic the Gathering manabase solver
     $ vi pyproject.toml  # Bump version number
     $ git add -p
     $ git commit -m "Bump version number to vX.X"
-    $ git tag -a "vX.X" -m "manabase vX.X"
+    $ git tag -a "vX.X" -m "manabase-solver vX.X"
+    $ \rm -r dist
+    $ python -m build
     $ twine upload dist/*
 
 (c) 2024 Thomas David Baker <bakert@gmail.com>

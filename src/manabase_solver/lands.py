@@ -1,4 +1,4 @@
-from .manabase import Basic, Check, W, U, B, R, G, C, Snarl, Filter, Bicycle, Tapland, Pain, Tango, RiverOfTearsLand
+from .manabase_solver import B, Basic, Bicycle, C, Check, Filter, G, Pain, R, RiverOfTearsLand, Snarl, Tango, Tapland, U, W
 
 Wastes = Basic("Wastes", None, "Basic Land", (C,))
 Plains = Basic("Plains", None, "Basic Land - Plains", (W,))

@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 
-from manabase import DEFAULT_WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, Turn, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, normalized_mana_spend, ooze, ooze_kiki, solve, viable_lands
+from manabase_solver import DEFAULT_WEIGHTS, AdarkarWastes, B, BattlefieldForge, Card, CavesOfKoilos, CelestialColonnade, ColorCombination, CreepingTarPit, CrumblingNecropolis, Deck, FetidHeath, FireLitThicket, FurycalmSnarl, G, GlacialFortress, IrrigatedFarmland, Island, IslandType, Manabase, ManaCost, Model, MysticGate, Plains, PlainsType, PortTown, PrairieStream, R, RiverOfTears, StirringWildwood, SunkenRuins, Swamp, Turn, U, VineglimmerSnarl, VividCrag, W, Weights, all_lands, azorius_taxes, card, frank, mono_w_bodyguards, normalized_mana_spend, ooze, ooze_kiki, solve, viable_lands
 
 
 def test_normalized_mana_spend() -> None:

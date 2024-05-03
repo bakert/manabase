@@ -1,4 +1,4 @@
-from manabase import Constraint, ManaCost, U, W, Turn, R, card, Deck, make_deck, solve, DEFAULT_WEIGHTS, B, G, penny_dreadful_lands
+from manabase_solver import DEFAULT_WEIGHTS, B, Constraint, Deck, G, ManaCost, R, Turn, U, W, card, make_deck, penny_dreadful_lands, solve
 
 # To use these scraps from the commandline install the library, maybe with `pip install -e .`
 
