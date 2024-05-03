@@ -22,12 +22,12 @@ class Weights:
     total_colored_sources: int
 
 
-WEIGHTS = Weights(normalized_mana_spend=1, total_lands=-10, pain=-2, total_colored_sources=0)
+WEIGHTS = Weights(normalized_mana_spend=5, total_lands=-10, pain=-1, total_colored_sources=0)
 
-# BAKERT can we avoid the whole normalized_mana_spend thing by just putting the number we actually want in the modle in the first place somehow?
+# BAKERT can we avoid the whole normalized_mana_spend thing by just putting the number we actually want in the module in the first place somehow?
 
 
-# BAKERT this is just floating aroudn
+# BAKERT this is just floating around
 def score(values: dict[str, int], weights: Weights) -> int:
     return sum(values[k.name] * getattr(weights, k.name) for k in fields(weights))
 
@@ -208,7 +208,6 @@ def normalized_mana_spend(turn: Turn, mana_spend: IntVar) -> Any:  # BAKERT type
     width = max_mana_spend - min_mana_spend
     points_per_mana_above_min = triangle(6) // width  # BAKERT what effect does this have?
     mana_spend_above_min = mana_spend - min_mana_spend
-    print(mana_spend_above_min, points_per_mana_above_min)
     return mana_spend_above_min * points_per_mana_above_min
 
 
@@ -418,7 +417,7 @@ class BasicTypeCaring(Conditional):
             return 0
         enabling_lands = {var for land, var in model.lands.items() if land.has_basic_land_types(self.basic_land_types_needed)}
         # This crudely models the difficulty of playing a Snarl untapped after t1 but overestimates that difficulty by assuming you always play an enabling land each turn
-        needed = need_untapped(turn) if self.zone == Zone.BATTLEFIELD else num_lands(turn, turn)
+        needed = need_untapped(turn, model.deck.size) if self.zone == Zone.BATTLEFIELD else num_lands(turn, turn, model.deck.size)
         enablers = sum(enabling_lands)
         return self.untapped_if(model, turn, needed, enablers, model.lands[self])
 
@@ -455,9 +454,9 @@ class Filter(Conditional):
                 continue
             if self.can_produce_any(land.produces):
                 enabling_lands.append(var)
-        needed = need_untapped(turn)
+        needed = need_untapped(turn, model.deck.size)
         enablers = sum(enabling_lands)
-        return self.untapped_if(model, turn, needed, enablers, model.lands[self])  # BAKERt rmeove this param in favor of reading it from model
+        return self.untapped_if(model, turn, needed, enablers, model.lands[self])  # BAKERt remove this param in favor of reading it from model
 
     def add_to_model(self, model: Model, constraint: Constraint) -> Contributions:
         m, n, _ = self.produces
@@ -488,7 +487,7 @@ class Filter(Conditional):
         # BAKERT consider giving this and basically everything a variable name for greater debuggability
         # BAKERT this is essentially repeated code from untapped_rules, but actually we're enforcing slightly different logic there!
         enablers = sum(var for land, var in model.lands.items() if land.can_produce_any({m, n}) and not isinstance(land, Filter))
-        required = need_untapped(constraint.turn)  # BAKERT need_untapped now a bad name for this func
+        required = need_untapped(constraint.turn, model.deck.size)  # BAKERT need_untapped now a bad name for this func
         model.add(enablers >= required).OnlyEnforceIf(active)
         model.add(enablers < required).OnlyEnforceIf(active.Not())
         # BAKERT we do have to say that you can't make M or N if you're not active but the way we were doing that was linking it to mystic_gate and that's not right, maybe other requirements will want you to include it on other turns
@@ -561,7 +560,7 @@ class Tango(Conditional):
     def untapped_rules(self, model: Model, turn: Turn) -> IntVar:
         if turn <= 2:
             return 0
-        needed = num_lands(2, Turn(turn - 1))
+        needed = num_lands(2, Turn(turn - 1), model.deck.size)
         enablers = sum(var for land, var in model.lands.items() if land.is_basic)
         return self.untapped_if(model, turn, needed, enablers, model.lands[self])
 
@@ -572,132 +571,12 @@ class Tango(Conditional):
         return {color_combination: model.lands[self] if self.can_produce_any(color_combination) else 0 for color_combination in constraint.color_combinations()}
 
 
-Wastes = Basic("Wastes", None, "Basic Land", (C,))
-Plains = Basic("Plains", None, "Basic Land - Plains", (W,))
-Island = Basic("Island", None, "Basic Land - Island", (U,))
-Swamp = Basic("Swamp", None, "Basic Land - Swamp", (B,))
-Mountain = Basic("Mountain", None, "Basic Land - Mountain", (R,))
-Forest = Basic("Forest", None, "Basic Land - Forest", (G,))
-
-# -Wastes
-basics = {Plains, Island, Swamp, Mountain, Forest}
-
-ClifftopRetreat = Check("Clifftop Retreat", None, "Land", (R, W))
-DragonskullSummit = Check("Dragonskull Summit", None, "Land", (B, R))
-DrownedCatacomb = Check("Drowned Catacomb", None, "Land", (U, B))
-GlacialFortress = Check("Glacial Fortress", None, "Land", (W, U))
-HinterlandHarbor = Check("Hinterland Harbor", None, "Land", (G, U))
-IsolatedChapel = Check("Isolated Chapel", None, "Land", (W, B))
-RootboundCrag = Check("Rootbound Crag", None, "Land", (R, G))
-SulfurFalls = Check("Sulfur Falls", None, "Land", (U, R))
-SunpetalGrove = Check("Sunpetal Grove", None, "Land", (G, W))
-WoodlandCemetery = Check("Woodland Cemetery", None, "Land", (B, G))
-
-checks = {ClifftopRetreat, DragonskullSummit, DrownedCatacomb, GlacialFortress, HinterlandHarbor, IsolatedChapel, RootboundCrag, SulfurFalls, SunpetalGrove, WoodlandCemetery}
-
-ChokedEstuary = Snarl("Choked Estuary", None, "Land", (U, B))
-ForebodingRuins = Snarl("Foreboding Ruins", None, "Land", (B, R))
-FortifiedVillage = Snarl("Fortified Village", None, "Land", (G, W))
-FrostboilSnarl = Snarl("Frostboil Snarl", None, "Land", (U, R))
-FurycalmSnarl = Snarl("Furycalm Snarl", None, "Land", (R, W))
-GameTrail = Snarl("Game Trail", None, "Land", (R, G))
-NecroblossomSnarl = Snarl("Necroblossom Snarl", None, "Land", (B, G))
-PortTown = Snarl("Port Town", None, "Land", (W, U))
-ShineshadowSnarl = Snarl("Shineshadow Snarl", None, "Land", (W, B))
-VineglimmerSnarl = Snarl("Vineglimmer Snarl", None, "Land", (G, U))
-
-# -FurycalmSnarl, NecroblossomSnarl, ShineshadowSnarl
-snarls = {ChokedEstuary, ForebodingRuins, FortifiedVillage, FrostboilSnarl, GameTrail, PortTown, VineglimmerSnarl}
-
-CascadeBluffs = Filter("Cascade Bluffs", None, "Land", (U, R, C))
-FetidHeath = Filter("Fetid Heath", None, "Land", (W, B, C))
-FireLitThicket = Filter("Fire-Lit Thicket", None, "Land", (R, G, C))
-FloodedGrove = Filter("Flooded Grove", None, "Land", (G, U, C))
-GravenCairns = Filter("Graven Cairns", None, "Land", (B, R, C))
-MysticGate = Filter("Mystic Gate", None, "Land", (W, U, C))
-RuggedPrairie = Filter("Rugged Prairie", None, "Land", (R, W, C))
-SunkenRuins = Filter("Sunken Ruins", None, "Land", (U, B, C))
-TwilightMire = Filter("Twilight Mire", None, "Land", (B, G, C))
-WoodedBastion = Filter("Wooded Bastion", None, "Land", (W, G, C))
-
-# -RuggedPrairie, TwilightMire
-filters = {CascadeBluffs, FetidHeath, FireLitThicket, FloodedGrove, GravenCairns, MysticGate, SunkenRuins, WoodedBastion}
-
-CanyonSlough = Bicycle("Canyon Slough", None, "Land - Swamp Mountain", (B, R))
-FetidPools = Bicycle("Fetid Pools", None, "Land - Island Swamp", (U, B))
-IrrigatedFarmland = Bicycle("Irrigated Farmland", None, "Land - Plains Island", (W, U))
-ScatteredGroves = Bicycle("Scattered Groves", None, "Land - Forest Plains", (G, W))
-ShelteredThicket = Bicycle("Sheltered Thicket", None, "Land - Mountain Forest", (R, G))
-
-bicycles = {CanyonSlough, FetidPools, IrrigatedFarmland, ScatteredGroves, ShelteredThicket}
-
-CelestialColonnade = Tapland("Celestial Colonnade", None, "Land", (W, U))
-CreepingTarPit = Tapland("Creeping Tar Pit", None, "Land", (U, B))
-HissingQuagmire = Tapland("Hissing Quagmire", None, "Land", (B, G))
-LavaclawReaches = Tapland("Lavaclaw Reaches", None, "Land", (B, R))
-LumberingFalls = Tapland("Lumbering Falls", None, "Land", (G, U))
-NeedleSpires = Tapland("Needle Spires", None, "Land", (R, W))
-RagingRavine = Tapland("Raging Ravine", None, "Land", (R, G))
-ShamblingVent = Tapland("Shambling Vent", None, "Land", (W, B))
-StirringWildwood = Tapland("Stirring Wildwood", None, "Land", (G, W))
-WanderingFumarole = Tapland("Wandering Fumarole", None, "Land", (U, R))
-
-# -CreepingTarPit
-creature_lands = {CelestialColonnade, HissingQuagmire, LavaclawReaches, LumberingFalls, NeedleSpires, RagingRavine, ShamblingVent, StirringWildwood, WanderingFumarole}
-
-RestlessAnchorage = Tapland("Restless Anchorage", None, "Land", (U, W))
-RestlessBivouac = Tapland("Restless Bivouac", None, "Land", (R, W))
-RestlessCottage = Tapland("Restless Cottage", None, "Land", (B, G))
-RestlessFortress = Tapland("Restless Fortress", None, "Land", (W, B))
-RestlessPrairie = Tapland("Restless Prairie", None, "Land", (G, W))
-RestlessReef = Tapland("Restless Reef", None, "Land", (U, B))
-RestlessRidgeline = Tapland("Restless Ridgeline", None, "Land", (R, G))
-RestlessSpire = Tapland("Restless Spire", None, "Land", (U, R))
-RestlessVents = Tapland("Restless Vents", None, "Land", (B, R))
-RestlessVinestalk = Tapland("Restless Vinestalk", None, "Land", (G, U))
-
-# -RestlessAnchorage, RestlessBivouac, RestlessCottage, RestlessReef, RestlessSpire
-restless_lands = {RestlessFortress, RestlessPrairie, RestlessRidgeline, RestlessVents, RestlessVinestalk}
-
-GrandColiseum = Tapland("Grand Coliseum", None, "Land", (W, U, B, R, G), painful=True)
-# BAKERT need to teach it that the third time you tap vivid crag it only taps for R, tricky
-VividCrag = Tapland("Vivid Crag", None, "Land", (W, U, B, R, G))
-
-five_color_lands = {GrandColiseum, VividCrag}
-
-AdarkarWastes = Pain("Adarkar Wastes", None, "Land", (W, U))
-BattlefieldForge = Pain("Battlefield Forge", None, "Land", (R, W))
-Brushland = Pain("Brushland", None, "Land", (G, W))
-CavesOfKoilos = Pain("Caves of Koilos", None, "Land", (W, B))
-KarplusanForest = Pain("Karplusan Forest", None, "Land", (R, G))
-LlanowarWastes = Pain("Llanowar Wastes", None, "Land", (B, G))
-ShivanReef = Pain("Shivan Reef", None, "Land", (U, R))
-SulfurousSprings = Pain("Sulfurous Springs", None, "Land", (B, R))
-UndergroundRiver = Pain("Underground River", None, "Land", (U, B))
-YavimayaCoast = Pain("Yavimaya Coast", None, "Land", (G, U))
-
-# -AdarkarWastes,  UndergroundRiver
-painlands = {BattlefieldForge, Brushland, CavesOfKoilos, KarplusanForest, LlanowarWastes, ShivanReef, SulfurousSprings, YavimayaCoast}
-
-PrairieStream = Tango("Prairie Stream", None, "Land - Plains Island", (W, U))
-CanopyVista = Tango("Canopy Vista", None, "Land - Forest Plains", (G, W))
-
-tangos = {PrairieStream, CanopyVista}
-
-CrumblingNecropolis = Tapland("Crumbling Necropolis", None, "Land", (U, B, R))
-RiverOfTears = RiverOfTearsLand("River of Tears", None, "Land", (U, B))
-
-# BAKERT Tendo Ice Bridge and Crumbling Vestige
-
-all_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))
-
-
 class IntValueException(Exception):
     pass
 
 
 @total_ordering
-class Solution:  # BAKERT it would be nice to put the amount each thing is contributing to scorealongside the thing Total lands: 23 (-230) or even normalized for that one aspect … Total lands: 23 (1.0)
+class Solution:  # BAKERT it would be nice to put the amount each thing is contributing to score alongside the thing Total lands: 23 (-230) or even normalized for that one aspect … Total lands: 23 (1.0)
     def __init__(self, status: int, model: Model, solver: cp_model.CpSolver) -> None:
         self.status = status
         self.model = model
@@ -722,8 +601,8 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
                     raise IntValueException("Solution doesn't currently handle non-zero ints as var values. Can you provide an IntVar instead?")
                 self.providing[k][var] = value
         # BAKERT a mana_spend of 0 is not actually possible but maybe that's not super important
-        # BAKERT worst_score here should try to be "worst score that would pass as a solution" not "worst possible score", i think? Does it matter? Clusters all the decks in 0.9x range?
-        # BAKERT it would be really good to make the worst total_lands a lot lower but how would we do that? some deck might really wanna play max lands? one drops in every color with only basics avialable or whatever. maybe we can use "if you solved thie problem with just basics"? that's a whole other solve but presumably a quick one1
+        # BAKERT worst_score here should try to be "worst score that would pass as a solution" not "worst possible score", I think? Does it matter? Clusters all the decks in 0.9x range?
+        # BAKERT it would be really good to make the worst total_lands a lot lower but how would we do that? some deck might really want to play max lands? one drops in every color with only basics available or whatever. maybe we can use "if you solved the problem with just basics"? that's a whole other solve but presumably a quick one1
         worst_score = score({"normalized_mana_spend": 0, "total_lands": self.model.deck.size, "pain": self.model.deck.size, "total_colored_sources": 0}, model.weights)
         # BAKERT put the normalizing stuff on Turn, probably, to avoid this monstrosity
         best_score = score({"normalized_mana_spend": normalized_mana_spend(self.model.deck.fundamental_turn, self.model.deck.fundamental_turn.max_mana_spend), "total_lands": self.min_lands, "pain": 0, "total_colored_sources": len(self.model.deck.colors) * self.min_lands}, model.weights)
@@ -811,12 +690,10 @@ def make_deck(*args: Constraint | int) -> Deck:
 
 
 # BAKERT need some way to say "the manabase must include 4 Shelldock Isle"
-def solve(deck: Deck, weights: Weights, lands: frozenset[Land] | None = None, forced_lands: Manabase | None = None) -> Solution | None:
+def solve(deck: Deck, weights: Weights, lands: frozenset[Land], forced_lands: Manabase | None = None) -> Solution | None:
     # BAKERT T2 RR completely counterfeits T2 R so there's no point in frank returning R=13, but you still need R in BR or BBR
     if not forced_lands:
         forced_lands = {}
-    if not lands:
-        lands = all_lands
     model = define_model(deck, weights, lands, forced_lands)  # BAKERT make forced_lands optional?
     solver = cp_model.CpSolver()
     status = solver.solve(model.model)  # BAKERT would be nice to not stutter here
@@ -839,7 +716,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
         sources[constraint] = {}
         # BAKERT this is not quite right because of Ancient Tomb and so on
         if constraint.turn == constraint.required.mana_value:
-            required_untapped = need_untapped(constraint.turn)
+            required_untapped = need_untapped(constraint.turn, deck.size)
         else:
             required_untapped = 0
         for land in model.lands:
@@ -849,7 +726,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
                 if color_combination not in sources[constraint]:
                     sources[constraint][color_combination] = []
                 sources[constraint][color_combination].append(contribution)
-        requirements = frank(constraint)
+        requirements = frank(constraint, deck.size)
         for color_combination, required in requirements.items():
             r = model.new_required(constraint.turn, color_combination)
             model.add(r == required)
@@ -860,7 +737,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
             generic_ok = len(constraint.required.pips) > len(constraint.required.colored_pips)
             admissible_untapped = {}
             for land, var in model.lands.items():
-                makes_one_of_the_colors = any(land.can_produce_any(colors) for colors in frank(constraint))
+                makes_one_of_the_colors = any(land.can_produce_any(colors) for colors in frank(constraint, deck.size))
                 if generic_ok or makes_one_of_the_colors:
                     admissible_untapped[land] = var
             lands_that_are_untapped_this_turn = [land.untapped_rules(model, constraint.turn) for land in admissible_untapped]
@@ -881,7 +758,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
             model.new_providing(constraint.turn, color_combination, contribs)  # BAKERT probably a better way to do this
             model.add(sum(sources[constraint][color_combination]) == sum(contribs))
 
-    model.add(model.min_lands == max(num_lands_required(constraint) for constraint in deck.constraints))  # BAKERT we can do this on deck now, and other thigns too presumably
+    model.add(model.min_lands == max(num_lands_required(constraint, deck.size) for constraint in deck.constraints))  # BAKERT we can do this on deck now, and other things too presumably
     model.add(model.total_lands == sum(model.lands.values()))
     model.add(model.total_lands >= model.min_lands)
 
@@ -893,7 +770,7 @@ def define_model(deck: Deck, weights: Weights, lands: frozenset[Land], forced_la
         # BAKERT the other place where we do this kind of thing we use admissible_untapped not land_vars … is this a bug? Does it matter?
         untapped_this_turn = sum(land.untapped_rules(model, turn) for land in model.lands)
         # BAKERT this isn't quite right it's kind of 1, turn (independently executed) and it's kind of turn, turn (if you spent every turn so far)
-        needed = num_lands(turn, turn)
+        needed = num_lands(turn, turn, deck.size)
         enough_untapped = model.new_bool_var((turn, "can spend mana"))  # BAKERT get consistent about underscores or whatever
         model.add(untapped_this_turn >= needed).OnlyEnforceIf(enough_untapped)
         model.add(untapped_this_turn < needed).OnlyEnforceIf(enough_untapped.Not())
@@ -948,16 +825,16 @@ def viable_lands(colors: frozenset[Color], lands: frozenset[Land]) -> frozenset[
 
 # BAKERT or is it better to use this? https://www.channelfireball.com/article/How-Many-Lands-Do-You-Need-in-Your-Deck-An-Updated-Analysis/cd1c1a24-d439-4a8e-b369-b936edb0b38a/
 # 19.59 + 1.90 * average mana value – 0.28 * number of cheap card draw or mana ramp spells + 0.27 * companion count
-def num_lands_required(constraint: Constraint) -> int:
-    return num_lands(constraint.required.mana_value, constraint.turn)
+def num_lands_required(constraint: Constraint, deck_size: int) -> int:
+    return num_lands(constraint.required.mana_value, constraint.turn, deck_size)
 
 
-def need_untapped(turn: Turn) -> int:
+def need_untapped(turn: Turn, deck_size: int) -> int:
     try:
-        return frank(Constraint(ManaCost(C), turn))[ColorCombination({C})]
+        return frank(Constraint(ManaCost(C), turn), deck_size)[ColorCombination({C})]
     except UnsatisfiableConstraint:
         # We don't know how many untapped lands you need beyond turn 6 so supply an overestimate
-        return frank(Constraint(ManaCost(C), Turn(6)))[ColorCombination({C})]  # BAKERT 6 is a magic number here and shared with normalize_mana_spend
+        return frank(Constraint(ManaCost(C), Turn(6)), deck_size)[ColorCombination({C})]  # BAKERT 6 is a magic number here and shared with normalize_mana_spend
 
 
 class UnsatisfiableConstraint(Exception):
@@ -965,7 +842,7 @@ class UnsatisfiableConstraint(Exception):
 
 
 # https://www.channelfireball.com/article/how-many-sources-do-you-need-to-consistently-cast-your-spells-a-2022-update/dc23a7d2-0a16-4c0b-ad36-586fcca03ad8/
-def frank(constraint: Constraint, deck_size: int = 60) -> dict[ColorCombination, int]:  # BAKERT how to mypy that the ColorCombinations must contain only Colors?
+def frank(constraint: Constraint, deck_size: int) -> dict[ColorCombination, int]:  # BAKERT how to mypy that the ColorCombinations must contain only Colors?
     table = {
         (1, 1): {60: 14, 80: 19, 99: 19, 40: 9},  # C Monastery Swiftspear
         (1, 2): {60: 13, 80: 18, 99: 19, 40: 9},  # 1C Ledger Shredder
@@ -998,185 +875,13 @@ def frank(constraint: Constraint, deck_size: int = 60) -> dict[ColorCombination,
     return results
 
 
-def num_lands(mana_value: int, turn: Turn) -> int:
+def num_lands(mana_value: int, turn: Turn, deck_size: int) -> int:
     try:
-        return frank(Constraint(turn=turn, required=ManaCost(*[W] * mana_value)))[ColorCombination([W] * mana_value)]
+        return frank(Constraint(turn=turn, required=ManaCost(*[W] * mana_value)), deck_size)[ColorCombination([W] * mana_value)]
     except UnsatisfiableConstraint:
         # We are at mana value 5 or beyond, return an underestimate, but better than nothing
-        return frank(Constraint(turn=Turn(4), required=ManaCost(*[W] * 4)))[ColorCombination([W] * 4)]
+        return frank(Constraint(turn=Turn(4), required=ManaCost(*[W] * 4)), deck_size)[ColorCombination([W] * 4)]
 
-
-DeputyOfDetention = Constraint(ManaCost(1, U, W), Turn(3))
-
-BurstLightningOnTurnTwo = Constraint(ManaCost(R), Turn(2))
-BurstLightning = card("R")
-MemoryLapse = Constraint(ManaCost(1, U), Turn(2))
-PestermiteOnTurnFour = Constraint(ManaCost(2, U), Turn(4))
-RestorationAngel = Constraint(ManaCost(3, W))
-KikiJikiMirrorBreaker = Constraint(ManaCost(2, R, R, R), Turn(5))
-Disenchant = Constraint(ManaCost(1, W), Turn(2))
-LightningHelix = card("RW")
-Forbid = Constraint(ManaCost(1, U, U), Turn(3))
-OptOnTurnTwo = card("U", 2)
-Pestermite = card("2U")
-AncestralVision = card("U")
-
-KikiOnSix = card("2RRR", 6)
-
-jeskai_twin_base = frozenset({BurstLightningOnTurnTwo, MemoryLapse, Pestermite, RestorationAngel})
-jeskai_twin = Deck(frozenset(jeskai_twin_base | {KikiJikiMirrorBreaker}), 60)
-jeskai_twin_with_the_ravens_warning = Deck(frozenset(jeskai_twin.constraints | {DeputyOfDetention}), 60)
-jeskai_twin_but_dont_rush_kiki = Deck(frozenset(jeskai_twin_base | {KikiOnSix}), 60)
-
-CracklingDrake = card("UURR")
-
-GloryBringer = card("3RR")
-AcademyLoremaster = card("UU")
-
-KikiOnSix = card("2RRR", 6)
-
-izzet_twin = make_deck(BurstLightningOnTurnTwo, MemoryLapse, Pestermite, KikiOnSix)
-izzet_twin_with_loremaster = Deck(frozenset(izzet_twin.constraints | {AcademyLoremaster}), 60)
-
-BenevolentBodyguard = Constraint(ManaCost(W), Turn(1))
-MeddlingMage = Constraint(ManaCost(U, W), Turn(2))
-SamuraiOfThePaleCurtain = Constraint(ManaCost(W, W), Turn(2))
-
-azorius_taxes = make_deck(BenevolentBodyguard, MeddlingMage, SamuraiOfThePaleCurtain, DeputyOfDetention)
-
-SettleTheWreckage = Constraint(ManaCost(2, W, W), Turn(4))
-VenserShaperSavant = card("2UU")
-
-azorius_taxes_postboard = Deck(frozenset(azorius_taxes.constraints | {SettleTheWreckage}), 60)
-
-mono_w_bodyguards = make_deck(BenevolentBodyguard)
-white_weenie = make_deck(BenevolentBodyguard, SamuraiOfThePaleCurtain)
-meddlers = make_deck(MeddlingMage)
-
-# BAKERT frank currently says UnsatisfiableConstraint to manacosts with 5+ colors
-InvasionOfAlara = Constraint(ManaCost(W, U, B, R, G), Turn(5))
-invasion_of_alara = make_deck(InvasionOfAlara)
-
-Duress = card("B")
-Abrade = card("1R")
-DigThroughTime = card("UU", 5)
-WrathOfGod = card("2WW", 4)
-
-popular = make_deck(MemoryLapse, Abrade, DigThroughTime, WrathOfGod)
-
-BaskingRootwalla = card("G")
-PutridImp = card("B")
-LotlethTroll = card("BG")
-LotlethTrollWithRegen = card("BBG")
-
-golgari_madness = make_deck(PutridImp, LotlethTroll)
-
-GrimLavamancer = card("R")
-Pteramander = card("U")
-LogicKnot = card("1UU")
-
-gfabsish = make_deck(GrimLavamancer, Pteramander, VenserShaperSavant)
-
-Assault = card("R", 2)
-LagoonBreach = card("1U")
-MadcapExperiment = card("3R")
-Away = card("2B")
-ChainOfPlasma = card("1R")
-
-my_invasion_of_alara = make_deck(Assault, LagoonBreach, MadcapExperiment, Away, InvasionOfAlara, ChainOfPlasma)
-
-GiantKiller = card("W")
-KnightOfTheWhiteOrchid = card("WW")
-SunTitan = card("4WW")
-
-emeria = make_deck(GiantKiller, KnightOfTheWhiteOrchid, SunTitan)
-
-PriestOfFellRites = card("WB")
-HaakonStromgaldScourge = card("1BB", 5)
-MagisterOfWorth = card("4WB")
-OptOnTurn2 = card("U", 2)
-SearchForAzcanta = card("1U")
-CouncilsJudgment = card("1WW", 4)
-EsperCharm = card("WUB")
-ForbidOnTurnFour = card("1UU", 4)
-WrathOfGod = card("2WW")
-
-gifts = make_deck(PriestOfFellRites, HaakonStromgaldScourge, MagisterOfWorth, OptOnTurn2, SearchForAzcanta, CouncilsJudgment, EsperCharm, ForbidOnTurnFour, WrathOfGod)
-
-actual_twin = make_deck(GrimLavamancer, Pteramander, KikiJikiMirrorBreaker, DigThroughTime)
-
-# Crypt of Agadeem possibly beyond simulation :)
-LamplightPhoenix = card("1RR")
-BigCyclingTurn = card("BBB")
-BringerOfTheLastGift = card("6BB")
-StarvingRevenant = card("2BB")
-ArchfiendOfIfnir = card("3BB")
-
-midnight_phoenix = make_deck(LamplightPhoenix, BigCyclingTurn, StarvingRevenant, ArchfiendOfIfnir)
-
-Cremate = card("B")
-GlimpseTheUnthinkable = card("UB")
-
-mill = make_deck(Cremate, GlimpseTheUnthinkable, DigThroughTime)
-
-HomeForDinner = card("1W")
-GeologicalAppraiser = card("2RR")
-SuspendGlimpseOnTwo = card("RR")
-SuspendGlimpseOnThree = card("RR", 3)
-CavalierOfDawn = card("2WWW")
-ChancellorOfTheForge = card("4RRR")
-EtalisFavor = card("2R")
-
-glimpse = make_deck(HomeForDinner, GeologicalAppraiser, EtalisFavor)
-
-SeismicAssault = card("RRR")
-SwansOfBrynArgoll = card("2UU")
-
-seismic_swans = make_deck(SeismicAssault, SwansOfBrynArgoll)
-
-NecroticOoze = card("2BB")
-GiftsUngiven = card("3U")
-TaintedIndulgence = card("UB")
-BuriedAlive = card("2B")
-
-ooze = make_deck(NecroticOoze, PriestOfFellRites, TaintedIndulgence, GiftsUngiven, BuriedAlive)
-
-BloodsoakedChampion = card("B")
-UnluckyWitness = card("R")
-DreadhordeButcher = card("BR")
-LightningSkelemental = card("BRR")
-
-skelemental_sac = make_deck(BloodsoakedChampion, UnluckyWitness, DreadhordeButcher, LightningSkelemental)
-
-Korlash = card("2BB")
-Lashwrithe = card("4")
-PlagueStinger = card("1B")
-
-mono_b_infect = [Korlash, Lashwrithe, PlagueStinger]
-
-ArchiveDragon = card("4UU")
-NorinTheWary = card("R")
-
-our_deck = make_deck(NorinTheWary, ArchiveDragon)
-
-CenoteScout = card("G")
-CenoteScoutOnTwo = card("G", 2)
-MasterOfThePearlTrident = card("UU")
-KumenaTyrantOfOrazca = card("1GU")
-
-ug_merfolk = make_deck(CenoteScoutOnTwo, MasterOfThePearlTrident, KumenaTyrantOfOrazca)
-
-splash_gifts_ooze = make_deck(NecroticOoze, PriestOfFellRites, GiftsUngiven, BuriedAlive)
-
-wb_ooze = make_deck(NecroticOoze, PriestOfFellRites)
-
-KarmicGuide = card("3WW")
-ConspiracyTheorist = card("1R")
-ooze_kiki = make_deck(ConspiracyTheorist, KarmicGuide, KikiJikiMirrorBreaker, PriestOfFellRites, RestorationAngel, BuriedAlive, BurstLightningOnTurnTwo)
-
-OustOnTwo = card("W", 2)
-TheRavensWarning = card("1UW")
-ravens_warning = make_deck(MemoryLapse, OustOnTwo, CouncilsJudgment, Forbid, TheRavensWarning, WrathOfGod)
 
 # BAKERT you should never choose Crumbling Necropolis over a check or a snarl in UR (or UB or RB) if you have even one land with the right basic types
 # BAKERT in general you should be able to get partial credit for a check or a snarl even if not hitting the numbers
@@ -1210,5 +915,3 @@ ravens_warning = make_deck(MemoryLapse, OustOnTwo, CouncilsJudgment, Forbid, The
 # BAKERT Now that multiset supports mypy I should be able to say x: FrozenMultiset[Color] but this causes a runtime error
 
 # BAKERT why is T3 untapped required and T4 untapped required both 24? surely it should change as mana cost changes?
-
-print(solve(ooze, WEIGHTS))
