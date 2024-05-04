@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manabase-solver"
-version = "0.1.2"
+version = "0.1.3"
 authors = [
     {name = "Thomas David Baker", email = "bakert@gmail.com"},
 ]
