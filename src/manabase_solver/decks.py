@@ -1,8 +1,4 @@
-from manabase_solver import DEFAULT_WEIGHTS, B, Constraint, Deck, G, ManaCost, R, Turn, U, W, card, make_deck, penny_dreadful_lands, solve
-
-# To use these scraps from the commandline install the library, maybe with `pip install -e .`
-
-DeputyOfDetention = Constraint(ManaCost(1, U, W), Turn(3))
+from .manabase_solver import B, Constraint, Deck, G, ManaCost, R, Turn, U, W, card, make_deck
 
 BurstLightningOnTurnTwo = Constraint(ManaCost(R), Turn(2))
 BurstLightning = card("R")
@@ -16,6 +12,7 @@ Forbid = Constraint(ManaCost(1, U, U), Turn(3))
 OptOnTurnTwo = card("U", 2)
 Pestermite = card("2U")
 AncestralVision = card("U")
+DeputyOfDetention = Constraint(ManaCost(1, U, W), Turn(3))
 
 KikiOnSix = card("2RRR", 6)
 
@@ -29,12 +26,11 @@ CracklingDrake = card("UURR")
 GloryBringer = card("3RR")
 AcademyLoremaster = card("UU")
 
-KikiOnSix = card("2RRR", 6)
-
 izzet_twin = make_deck(BurstLightningOnTurnTwo, MemoryLapse, Pestermite, KikiOnSix)
 izzet_twin_with_loremaster = Deck(frozenset(izzet_twin.constraints | {AcademyLoremaster}), 60)
 
 BenevolentBodyguard = Constraint(ManaCost(W), Turn(1))
+mono_w_bodyguards = make_deck(BenevolentBodyguard)
 MeddlingMage = Constraint(ManaCost(U, W), Turn(2))
 SamuraiOfThePaleCurtain = Constraint(ManaCost(W, W), Turn(2))
 
@@ -45,7 +41,6 @@ VenserShaperSavant = card("2UU")
 
 azorius_taxes_postboard = Deck(frozenset(azorius_taxes.constraints | {SettleTheWreckage}), 60)
 
-mono_w_bodyguards = make_deck(BenevolentBodyguard)
 white_weenie = make_deck(BenevolentBodyguard, SamuraiOfThePaleCurtain)
 meddlers = make_deck(MeddlingMage)
 
@@ -189,4 +184,5 @@ datro_orzhov = make_deck(card("1B"), card("1W"), card("2WW"))
 
 game_objects = make_deck(card("UG"), card("2UB"), card("WG"))
 
-print(solve(game_objects, DEFAULT_WEIGHTS, penny_dreadful_lands))
+LoxodonWarhammer = card("3")
+just_a_hammer = make_deck(LoxodonWarhammer)

@@ -89,7 +89,9 @@ RestlessVents = Tapland("Restless Vents", None, "Land", (B, R))
 RestlessVinestalk = Tapland("Restless Vinestalk", None, "Land", (G, U))
 
 # -RestlessAnchorage, RestlessBivouac, RestlessCottage, RestlessReef, RestlessSpire
-restless_lands = {RestlessFortress, RestlessPrairie, RestlessRidgeline, RestlessVents, RestlessVinestalk}
+s32_restless_lands = {RestlessFortress, RestlessPrairie, RestlessRidgeline, RestlessVents, RestlessVinestalk}
+# -RestlessAnchorage, RestlessCottage, RestlessReef, RestlessVents
+restless_lands = {RestlessBivouac, RestlessPrairie, RestlessRidgeline, RestlessSpire, RestlessVinestalk}
 # BAKERT haven't updated for S33 because they're not that interesting
 
 GrandColiseum = Tapland("Grand Coliseum", None, "Land", (W, U, B, R, G), painful=True)
@@ -115,19 +117,24 @@ YavimayaCoast = Pain("Yavimaya Coast", None, "Land", (G, U))
 # -AdarkarWastes,  UndergroundRiver
 s32_painlands = {BattlefieldForge, Brushland, CavesOfKoilos, KarplusanForest, LlanowarWastes, ShivanReef, SulfurousSprings, YavimayaCoast}
 # -AdarkarWastes, UndergroundRiver, SulfurousSprings, KarplusanForest
-# BAKERT did AdarkarWastes make it in?
 painlands = {BattlefieldForge, Brushland, CavesOfKoilos, LlanowarWastes, ShivanReef, YavimayaCoast}
 
-PrairieStream = Tango("Prairie Stream", None, "Land - Plains Island", (W, U))
 CanopyVista = Tango("Canopy Vista", None, "Land - Forest Plains", (G, W))
+CinderGlade = Tango("Cinder Glade", None, "Land - Mountain Forest", (R, G))
+PrairieStream = Tango("Prairie Stream", None, "Land - Plains Island", (W, U))
+SmolderingMarsh = Tango("Smoldering Marsh", None, "Land - Swamp Mountain", (B, R))
+SunkenHollow = Tango("Sunken Hollow", None, "Land - Island Swamp", (U, B))
 
-# BAKERT we have more tangos in S33
-tangos = {PrairieStream, CanopyVista}
+s32_tangos = {PrairieStream, CanopyVista}
+tangos = {CanopyVista, CinderGlade, PrairieStream, SmolderingMarsh, SunkenHollow}
 
-# BAKERT this is wrong for S33
 CrumblingNecropolis = Tapland("Crumbling Necropolis", None, "Land", (U, B, R))
+SeasideCitadel = Tapland("Seaside Citadel", None, "Land", (G, W, U))
+
 RiverOfTears = RiverOfTearsLand("River of Tears", None, "Land", (U, B))
+# BAKERT Nimbus Maze
 
 # BAKERT Tendo Ice Bridge and Crumbling Vestige
 
-penny_dreadful_lands = frozenset(basics.union(checks).union(snarls).union(bicycles).union(filters).union(five_color_lands).union(painlands).union({CrumblingNecropolis, RiverOfTears}).union(tangos).union(creature_lands).union(restless_lands))
+penny_dreadful_season_32_lands = frozenset(basics | checks | s32_snarls | bicycles | s32_filters | s32_five_color_lands | s32_painlands | {CrumblingNecropolis} | {RiverOfTears} | s32_tangos | creature_lands | s32_restless_lands)
+penny_dreadful_lands = frozenset(basics | checks | snarls | bicycles | filters | five_color_lands | painlands | {SeasideCitadel} | {RiverOfTears} | tangos | creature_lands | restless_lands)

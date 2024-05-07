@@ -23,7 +23,7 @@ Magic the Gathering manabase solver
     $ pip install -r requirements.txt
     $ source bin/activate
     $ pip install -e .
-    $ python scripts/scratch.py
+    $ python scripts/run.py
     $ pip install -r requirements-dev.txt
     $ source bin/activate
     $ make all
