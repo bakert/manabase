@@ -269,3 +269,11 @@ def test_weights_effects() -> None:
     assert solution23_lands.normalized_score > solution25_lands.normalized_score
     # … but when the weight for mana spend gets higher we're prepared to play more lands to get an untapped land on t3
     assert solution23_spend.normalized_score < solution25_spend.normalized_score
+
+def test_x() -> None:
+    ereboss_intervention = card("XB")
+    assert ereboss_intervention.turn == 2
+    abandon_hope = card("X1B")
+    assert abandon_hope.turn == 3
+    decree_of_justice = card("XX2WW")
+    assert decree_of_justice.turn == 6

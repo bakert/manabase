@@ -664,15 +664,18 @@ class Solution:  # BAKERT it would be nice to put the amount each thing is contr
 
 def card(spec: str, turn: int | None = None) -> Constraint:
     colors: list[Color] = []
+    stripped = spec.lstrip('X')
+    xs = len(spec) - len(stripped)
+    print(xs, stripped)
     generic = 0
-    for i in range(len(spec) - 1, -1, -1):
-        c = spec[i]
+    for i in range(len(stripped) - 1, -1, -1):
+        c = stripped[i]
         if c.isnumeric():
-            generic = int(spec[0 : i + 1])
+            generic = int(stripped[0 : i + 1])
             break
         colors.insert(0, next(color for color in all_colors if color.code == c))
     parts = ([generic] if generic else []) + colors
-    turn = turn if turn else generic + len(colors)
+    turn = turn if turn else generic + xs + len(colors)
     return Constraint(ManaCost(*parts), Turn(turn))
 
 
